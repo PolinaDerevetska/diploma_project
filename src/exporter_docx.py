@@ -352,18 +352,12 @@ def export_student_docx(
     # Таблиця бланку відповідей
     cols = 10
     rows_needed = (variant.total_questions + cols - 1) // cols
-    table = doc.add_table(rows=rows_needed * 2 + 1, cols=cols + 1)
+    table = doc.add_table(rows=rows_needed * 2, cols=cols + 1)
     table.style = "Table Grid"
 
-    # Заголовковий рядок
-    hdr = table.rows[0]
-    hdr.cells[0].text = "№"
-    for j in range(1, cols + 1):
-        hdr.cells[j].text = str(j)
-
     for r in range(rows_needed):
-        num_row = table.rows[r * 2 + 1]
-        ans_row = table.rows[r * 2 + 2]
+        num_row = table.rows[r * 2]
+        ans_row = table.rows[r * 2 + 1]
         num_row.cells[0].text = "№"
         ans_row.cells[0].text = "Відп."
         for j in range(cols):
