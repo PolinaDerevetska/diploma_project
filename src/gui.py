@@ -59,20 +59,58 @@ def card(parent, title="", **kw):
     return outer, inner
 
 
-def accent_btn(parent, text, command, width=None):
-    kw = {"width": width} if width else {}
-    return tk.Button(parent, text=text, command=command,
-                     bg=C_ACCENT, fg="white", activebackground=C_SIDEBAR,
-                     activeforeground="white", relief="flat", bd=0,
-                     font=FONT_BOLD, padx=14, pady=8, cursor="hand2", **kw)
+def accent_btn(parent, text, command, width=None, big=False):
+    """
+    Кнопка-акцент (Frame+Label) — коректно відображає колір на macOS.
+    big=True — збільшений варіант для головних CTA (кнопка «Далі», «Генерувати»).
+    """
+    px = 28 if big else 18
+    py = 13 if big else 9
+    fs = 14 if big else 12
+
+    outer = tk.Frame(parent, bg=C_ACCENT, cursor="hand2")
+    if width:
+        outer.configure(width=width)
+
+    lbl = tk.Label(outer, text=text, bg=C_ACCENT, fg="white",
+                   font=("Helvetica", fs, "bold"),
+                   padx=px, pady=py, cursor="hand2")
+    lbl.pack()
+
+    C_HOVER = "#1A6A8A"
+    def _enter(e): outer.configure(bg=C_HOVER);  lbl.configure(bg=C_HOVER)
+    def _leave(e): outer.configure(bg=C_ACCENT); lbl.configure(bg=C_ACCENT)
+    def _click(e): command()
+
+    for w in (outer, lbl):
+        w.bind("<Enter>",    _enter)
+        w.bind("<Leave>",    _leave)
+        w.bind("<Button-1>", _click)
+
+    return outer
 
 
 def ghost_btn(parent, text, command, width=None):
-    kw = {"width": width} if width else {}
-    return tk.Button(parent, text=text, command=command,
-                     bg=C_BORDER, fg=C_TEXT, activebackground="#C8D0DA",
-                     relief="flat", bd=0, font=FONT_SM,
-                     padx=10, pady=6, cursor="hand2", **kw)
+    """Вторинна кнопка (Frame+Label)."""
+    outer = tk.Frame(parent, bg=C_BORDER, cursor="hand2")
+    if width:
+        outer.configure(width=width)
+
+    lbl = tk.Label(outer, text=text, bg=C_BORDER, fg=C_TEXT,
+                   font=FONT_SM, padx=12, pady=8, cursor="hand2")
+    lbl.pack()
+
+    C_HOVER = "#C8D0DA"
+    def _enter(e): outer.configure(bg=C_HOVER); lbl.configure(bg=C_HOVER)
+    def _leave(e): outer.configure(bg=C_BORDER); lbl.configure(bg=C_BORDER)
+    def _click(e): command()
+
+    for w in (outer, lbl):
+        w.bind("<Enter>",    _enter)
+        w.bind("<Leave>",    _leave)
+        w.bind("<Button-1>", _click)
+
+    return outer
 
 
 # ─── CounterWidget ────────────────────────────────────────────────────────────
@@ -378,30 +416,30 @@ class GenerateFrame(tk.Frame):
         cards_row.pack()
 
         cat_info = {
-            "B1.1": ("Авіаційний механік\nповітряне судно\nз ГТД", "✈"),
-            "B1.3": ("Авіаційний механік\nповітряне судно\nз ПД", "🔧"),
-            "B2":   ("Авіаційний механік\nавіоніка", "📡"),
+            "B1.1": ("Авіаційний механік\nповітряне судно з ГТД\n(газотурбінний двигун)", "⚙️"),
+            "B1.3": ("Авіаційний механік\nповітряне судно з ПД\n(поршневий двигун)", "🔧"),
+            "B2":   ("Авіаційний механік\nавіоніка та електроніка", "📡"),
         }
 
         for cat, (desc, icon) in cat_info.items():
             c = tk.Frame(cards_row, bg=C_CARD,
-                         highlightthickness=2,
+                         highlightthickness=3,
                          highlightbackground=C_BORDER,
-                         cursor="hand2", padx=20, pady=18)
-            c.pack(side="left", padx=10)
+                         cursor="hand2",
+                         padx=32, pady=28)
+            c.pack(side="left", padx=14)
 
             tk.Label(c, text=icon, bg=C_CARD,
-                     font=("Helvetica", 26)).pack()
+                     font=("Helvetica", 40)).pack(pady=(0, 4))
             tk.Label(c, text=cat, bg=C_CARD, fg=C_SIDEBAR,
-                     font=("Helvetica", 15, "bold")).pack(pady=(4, 2))
+                     font=("Helvetica", 18, "bold")).pack(pady=(0, 6))
             tk.Label(c, text=desc, bg=C_CARD, fg=C_MUTED,
-                     font=("Helvetica", 9), justify="center").pack()
+                     font=("Helvetica", 11), justify="center").pack()
 
             def _select(e=None, cv=cat, frame=c):
                 self._cat_var.set(cv)
                 for child in cards_row.winfo_children():
-                    child.configure(highlightbackground=C_BORDER,
-                                    bg=C_CARD)
+                    child.configure(highlightbackground=C_BORDER, bg=C_CARD)
                     for w in child.winfo_children():
                         w.configure(bg=C_CARD)
                 frame.configure(highlightbackground=C_ACCENT, bg="#EBF5FB")
@@ -413,10 +451,9 @@ class GenerateFrame(tk.Frame):
 
         self._cat_cards_row = cards_row
 
-        # Вибираємо першу картку за замовчуванням при показі
         self._step0_initialized = False
 
-        accent_btn(wrap, "Далі  →", self._from_step0_to_1).pack(pady=(28, 0))
+        accent_btn(wrap, "Далі  →", self._from_step0_to_1, big=True).pack(pady=(36, 0))
 
     def _from_step0_to_1(self):
         cat = self._cat_var.get()
@@ -497,7 +534,7 @@ class GenerateFrame(tk.Frame):
             bot, text="", bg=C_BG, fg=C_MUTED, font=FONT_SM)
         self._step1_total_lbl.pack(side="left")
 
-        accent_btn(bot, "Далі  →", self._from_step1_to_2).pack(side="right")
+        accent_btn(bot, "Далі  →", self._from_step1_to_2, big=True).pack(side="right")
 
     def _fill_quota_list(self):
         inner = self._q1_inner
@@ -691,7 +728,7 @@ class GenerateFrame(tk.Frame):
         btn_row = tk.Frame(wrap, bg=C_BG)
         btn_row.pack()
         ghost_btn(btn_row, "← Назад", lambda: self._go_to(1)).pack(side="left", padx=8)
-        accent_btn(btn_row, "Далі  →", lambda: self._go_to(3)).pack(side="left", padx=8)
+        accent_btn(btn_row, "Далі  →", lambda: self._go_to(3), big=True).pack(side="left", padx=8)
 
     # ── Крок 3: Вибір папки ───────────────────────────────────────────────────
 
@@ -726,7 +763,7 @@ class GenerateFrame(tk.Frame):
         btn_row = tk.Frame(wrap, bg=C_BG)
         btn_row.pack()
         ghost_btn(btn_row, "← Назад", lambda: self._go_to(2)).pack(side="left", padx=8)
-        accent_btn(btn_row, "🚀  Генерувати", self._start_generate).pack(side="left", padx=8)
+        accent_btn(btn_row, "🚀  Генерувати", self._start_generate, big=True).pack(side="left", padx=8)
 
     def _browse_output(self):
         d = filedialog.askdirectory(
@@ -843,8 +880,8 @@ class GenerateFrame(tk.Frame):
             def _open():
                 subprocess.Popen(["open", out_dir])
 
-            accent_btn(self._step4_btns, "📂  Відкрити папку", _open).pack(
-                side="left", padx=8)
+            accent_btn(self._step4_btns, "📂  Відкрити папку", _open,
+                       big=True).pack(side="left", padx=8)
             ghost_btn(self._step4_btns, "↩  Створити ще",
                       lambda: self._go_to(0)).pack(side="left", padx=8)
 
