@@ -331,7 +331,7 @@ class GenerateFrame(tk.Frame):
         self._indicator = tk.Frame(self, bg=C_BG)
         self._indicator.pack(fill="x", padx=32, pady=(18, 0))
         self._step_lbls = []
-        steps = ["Категорія", "Квоти", "Варіанти", "Папка", "Генерація"]
+        steps = ["Категорія", "Норми", "Варіанти", "Папка", "Генерація"]
         for i, s in enumerate(steps):
             col = tk.Frame(self._indicator, bg=C_BG)
             col.pack(side="left", expand=True)
@@ -473,27 +473,27 @@ class GenerateFrame(tk.Frame):
 
         if not cat_id:
             messagebox.showwarning("Увага",
-                f"Категорія {cat} ще не завантажена.\nСпочатку завантажте квоти на вкладці «Модулі».")
+                f"Категорія {cat} ще не завантажена.\nСпочатку завантажте норми на вкладці «Модулі».")
             return
 
         self._current_cat_id = cat_id
         self._fill_quota_list()
         self._go_to(1)
 
-    # ── Крок 1: Квоти за розділами ────────────────────────────────────────────
+    # ── Крок 1: Норми за розділами ────────────────────────────────────────────
 
     def _build_step1(self, page):
         hdr = tk.Frame(page, bg=C_BG)
         hdr.pack(fill="x", padx=28, pady=(14, 0))
 
         ghost_btn(hdr, "← Назад", lambda: self._go_to(0)).pack(side="left")
-        tk.Label(hdr, text="Квоти питань за розділами",
+        tk.Label(hdr, text="Норми питань за розділами",
                  bg=C_BG, fg=C_SIDEBAR, font=FONT_TITLE).pack(side="left", padx=16)
 
         # Легенда
         tk.Label(page,
                  text="Натисніть на модуль, щоб розгорнути розділи. "
-                      "«В БД» — доступних питань. Задайте квоту для кожного розділу.",
+                      "«В БД» — доступних питань. Задайте норму для кожного розділу.",
                  bg=C_BG, fg=C_MUTED, font=("Helvetica", 10),
                  justify="left").pack(anchor="w", padx=28, pady=(4, 6))
 
@@ -634,7 +634,7 @@ class GenerateFrame(tk.Frame):
                 ("Розділ", 10, "left"),
                 ("Назва", 0, "left"),
                 ("В БД", 6, "right"),
-                ("Квота", 9, "right"),
+                ("Норма", 9, "right"),
             ]:
                 tk.Label(col_hdr, text=txt, width=w if w else None,
                          bg="#EEF2F7", fg=C_SIDEBAR,
@@ -696,9 +696,9 @@ class GenerateFrame(tk.Frame):
         total = sum(v.get() for v in self._quota_vars.values())
         if total == 0:
             messagebox.showwarning("Увага",
-                "Задайте квоту хоча б для одного розділу.")
+                "Задайте норму хоча б для одного розділу.")
             return
-        # Зберігаємо квоти у БД
+        # Зберігаємо норми у БД
         dp = self.app.db_path.get()
         cat_id = self._current_cat_id
         for sec_id, var in self._quota_vars.items():
@@ -964,13 +964,13 @@ class ModulesFrame(tk.Frame):
         right.grid(row=0, column=1, sticky="nsew", pady=(0, 16))
         right.rowconfigure(2, weight=1)
 
-        # Таблиця квот
-        outer1, inner1 = card(right, "1.  Таблиця квот")
+        # Таблиця норм
+        outer1, inner1 = card(right, "1.  Таблиця норм")
         outer1.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
         self.quota_path = tk.StringVar()
         self._file_row(inner1, self.quota_path, "Таблиця по категоріям.docx", "*.docx")
-        accent_btn(inner1, "Завантажити квоти",
+        accent_btn(inner1, "Завантажити норми",
                    self._import_quotas).pack(fill="x", padx=16, pady=(6, 14))
 
         # Файл модуля
@@ -1095,10 +1095,10 @@ class ModulesFrame(tk.Frame):
     def _import_quotas(self):
         path = self.quota_path.get().strip()
         if not path or not os.path.exists(path):
-            messagebox.showwarning("Увага", "Оберіть файл таблиці квот!")
+            messagebox.showwarning("Увага", "Оберіть файл таблиці норм!")
             return
         dp = self.app.db_path.get()
-        self._log(f"→ Завантаження квот: {os.path.basename(path)}", "info")
+        self._log(f"→ Завантаження норм: {os.path.basename(path)}", "info")
 
         def worker():
             try:
@@ -1106,9 +1106,9 @@ class ModulesFrame(tk.Frame):
                 ql.load_quotas_from_docx(path, dp)
                 s = db.get_db_stats(dp)
                 self._log(
-                    f"✓ Квоти завантажено. Розділів: {s['sections']}, квот: {s['quotas']}",
+                    f"✓ Норми завантажено. Розділів: {s['sections']}, норм: {s['quotas']}",
                     "ok")
-                self.app.set_status("Квоти завантажено", C_SUCCESS)
+                self.app.set_status("Норми завантажено", C_SUCCESS)
                 self.after(0, self._refresh_modules)
             except Exception as e:
                 self._log(f"✗ Помилка: {e}", "err")
@@ -1236,9 +1236,9 @@ class StatsFrame(tk.Frame):
         for icon, value, label, color in [
             ("📚", stats["questions"],     "Питань",                C_ACCENT),
             ("📂", mods_with_q,            "Модулів\n(з питаннями)", C_SUCCESS),
-            ("📋", stats["modules"],       "Модулів\n(у квотах)",   C_SIDEBAR),
+            ("📋", stats["modules"],       "Модулів\n(у нормах)",   C_SIDEBAR),
             ("🗂",  stats["sections"],     "Розділів",              C_SIDEBAR),
-            ("🔢",  stats["quotas"],       "Активних квот",         C_ACCENT),
+            ("🔢",  stats["quotas"],       "Активних норм",         C_ACCENT),
         ]:
             c = tk.Frame(self._cards_row, bg=C_CARD,
                          relief="flat", bd=0,

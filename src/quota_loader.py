@@ -1,5 +1,5 @@
 """
-quota_loader.py — завантаження квот із файлу "Таблиця по категоріям.docx"
+quota_loader.py — завантаження норм із файлу "Таблиця по категоріям.docx"
                   до бази даних.
 
 Структура файлу:
@@ -82,13 +82,13 @@ def _normalize_suffix(ch: str) -> str:
 
 def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
     """
-    Читає файл таблиці категорій і зберігає квоти до БД.
+    Читає файл таблиці категорій і зберігає норми до БД.
 
     Args:
         filepath: шлях до файлу "Таблиця по категоріям.docx"
         db_path:  шлях до SQLite БД
     """
-    log.info("Завантаження квот із: %s", filepath)
+    log.info("Завантаження норм із: %s", filepath)
     doc = Document(filepath)
 
     # Зберігаємо категорії, якщо ще не існують
@@ -123,11 +123,11 @@ def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
     # Визначаємо поточний модуль за порядком таблиць і параграфів у XML
     _load_quotas_from_tables(doc, cat_ids, db_path)
 
-    log.info("Квоти завантажено успішно")
+    log.info("Норми завантажено успішно")
 
 
 def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: str) -> None:
-    """Обходить таблиці документа і зберігає квоти."""
+    """Обходить таблиці документа і зберігає норми."""
 
     # Збираємо всі елементи body по порядку
     from docx.oxml.ns import qn as _qn
@@ -168,7 +168,7 @@ def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: st
 
 
 def _process_quota_table(table, module_id: int, cat_ids: dict[str, int], db_path: str) -> None:
-    """Обробляє одну таблицю квот."""
+    """Обробляє одну таблицю норм."""
     if not table.rows:
         return
 

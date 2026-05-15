@@ -73,7 +73,7 @@ def init_db(db_path: str = DB_PATH) -> None:
             CREATE INDEX IF NOT EXISTS idx_qimg_question
                 ON question_images(question_id, context);
 
-            -- Квоти: скільки питань потрібно з кожного розділу для кожної категорії
+            -- Норми: скільки питань потрібно з кожного розділу для кожної категорії
             CREATE TABLE IF NOT EXISTS quotas (
                 section_id      INTEGER NOT NULL REFERENCES sections(id),
                 category_id     INTEGER NOT NULL REFERENCES categories(id),
@@ -161,7 +161,7 @@ def get_sections_by_module(module_id: int, db_path: str = DB_PATH) -> list[sqlit
 def get_sections_by_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
     """
     Повертає всі розділи, що мають питання для заданої категорії,
-    разом із кількістю доступних питань та збереженою квотою.
+    разом із кількістю доступних питань та збереженою нормою.
     """
     with get_connection(db_path) as conn:
         return conn.execute(
@@ -227,7 +227,7 @@ def count_questions(section_id: int, category_id: int, db_path: str = DB_PATH) -
         return row["cnt"]
 
 
-# ─── Квоти ───────────────────────────────────────────────────────────────────
+# ─── Норми ───────────────────────────────────────────────────────────────────
 
 def insert_quota(
     section_id: int,
@@ -245,7 +245,7 @@ def insert_quota(
 
 
 def get_quotas_for_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
-    """Повертає всі квоти для заданої категорії (тільки де count > 0)."""
+    """Повертає всі норми для заданої категорії (тільки де count > 0)."""
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT q.section_id, q.count, s.code as section_code,
