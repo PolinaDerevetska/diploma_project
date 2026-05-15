@@ -169,12 +169,16 @@ def _add_title_block(doc: Document, variant: TestVariant, is_answer_key: bool) -
 
     doc.add_paragraph()  # порожній рядок
 
-    # ПІБ здобувача
+    # Номер варіанту + пусте поле ПІБ
     p3 = doc.add_paragraph()
-    r1 = p3.add_run("Здобувач: ")
+    r1 = p3.add_run(f"{variant.student_name}    ")
     _set_font(r1, 12, bold=True)
-    r2 = p3.add_run(variant.student_name)
-    _set_font(r2, 12)
+
+    p_pib = doc.add_paragraph()
+    rpib1 = p_pib.add_run("ПІБ здобувача: ")
+    _set_font(rpib1, 12, bold=True)
+    rpib2 = p_pib.add_run("___________________________")
+    _set_font(rpib2, 12)
 
     # Дата генерації
     p4 = doc.add_paragraph()
@@ -338,9 +342,9 @@ def export_student_docx(
 
     doc.add_paragraph()
     pn = doc.add_paragraph()
-    rn1 = pn.add_run("Здобувач: ")
+    rn1 = pn.add_run(f"{variant.student_name}    ")
     _set_font(rn1, 12, bold=True)
-    rn2 = pn.add_run(variant.student_name)
+    rn2 = pn.add_run("ПІБ: ___________________________")
     _set_font(rn2, 12)
 
     doc.add_paragraph()

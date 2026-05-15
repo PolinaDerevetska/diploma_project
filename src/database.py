@@ -158,6 +158,27 @@ def get_sections_by_module(module_id: int, db_path: str = DB_PATH) -> list[sqlit
         ).fetchall()
 
 
+def get_sections_by_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
+    """
+    Повертає всі розділи, що мають питання для заданої категорії,
+    разом із кількістю доступних питань та збереженою квотою.
+    """
+    with get_connection(db_path) as conn:
+        return conn.execute(
+            """SELECT s.id, s.code AS section_code, s.name AS section_name,
+                      m.id AS module_id, m.code AS module_code, m.name AS module_name,
+                      COUNT(q.id) AS available,
+                      COALESCE(qt.count, 0) AS saved_quota
+               FROM sections s
+               JOIN modules m   ON m.id = s.module_id
+               JOIN questions q ON q.section_id = s.id AND q.category_id = ?
+               LEFT JOIN quotas qt ON qt.section_id = s.id AND qt.category_id = ?
+               GROUP BY s.id
+               ORDER BY CAST(m.code AS INTEGER), s.id""",
+            (category_id, category_id),
+        ).fetchall()
+
+
 # ─── Питання ─────────────────────────────────────────────────────────────────
 
 def insert_question(
