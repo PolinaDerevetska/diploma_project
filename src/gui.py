@@ -116,7 +116,10 @@ def ghost_btn(parent, text, command, width=None):
 # ─── CounterWidget ────────────────────────────────────────────────────────────
 
 class CounterWidget(tk.Frame):
-    """Компонент «−  значення  +» з прив'язаною IntVar."""
+    """
+    Компонент «−  [поле вводу]  +» з прив'язаною IntVar.
+    Підтримує: кнопки +/−, пряме введення з клавіатури, Enter/Tab для підтвердження.
+    """
 
     def __init__(self, parent, var: tk.IntVar,
                  min_val: int = 0, max_val: int = 999,
@@ -126,38 +129,90 @@ class CounterWidget(tk.Frame):
         self._var = var
         self._min = min_val
         self._max = max_val
+        self._fs  = font_size
 
         # Кнопка «−»
         self._btn_minus = tk.Label(
             self, text="−", bg="#E8EDF2", fg=C_TEXT,
             font=("Helvetica", font_size, "bold"),
-            width=2, cursor="hand2",
-            relief="flat",
+            width=2, cursor="hand2", relief="flat",
         )
         self._btn_minus.pack(side="left")
 
-        # Значення
-        self._lbl = tk.Label(
-            self, textvariable=var,
-            bg=bg, fg=C_TEXT,
+        # Поле введення (замість Label — Entry)
+        self._entry_var = tk.StringVar(value=str(var.get()))
+        self._entry = tk.Entry(
+            self,
+            textvariable=self._entry_var,
             font=("Helvetica", font_size, "bold"),
-            width=4, anchor="center",
+            width=4,
+            justify="center",
+            bg=bg,
+            fg=C_TEXT,
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=C_BORDER,
+            highlightcolor=C_ACCENT,
+            insertbackground=C_TEXT,
         )
-        self._lbl.pack(side="left", padx=4)
+        self._entry.pack(side="left", padx=4)
 
         # Кнопка «+»
         self._btn_plus = tk.Label(
             self, text="+", bg=C_ACCENT, fg="white",
             font=("Helvetica", font_size, "bold"),
-            width=2, cursor="hand2",
-            relief="flat",
+            width=2, cursor="hand2", relief="flat",
         )
         self._btn_plus.pack(side="left")
 
+        # Прив'язки кнопок
         self._btn_minus.bind("<Button-1>", self._dec)
         self._btn_plus.bind("<Button-1>",  self._inc)
-        self._var.trace_add("write", self._update_states)
+
+        # Клавіатурне введення: підтверджуємо по Enter / Tab / втраті фокуса
+        self._entry.bind("<Return>",    self._commit)
+        self._entry.bind("<Tab>",       self._commit)
+        self._entry.bind("<FocusOut>",  self._commit)
+        # Стрілки вгору/вниз у полі
+        self._entry.bind("<Up>",        lambda e: self._inc())
+        self._entry.bind("<Down>",      lambda e: self._dec())
+        # Дозволяємо лише цифри
+        vcmd = (self.register(self._validate_char), "%S")
+        self._entry.configure(validate="key", validatecommand=vcmd)
+
+        # Синхронізація IntVar → поле (якщо змінили var ззовні)
+        self._var.trace_add("write", self._sync_from_var)
         self._update_states()
+
+    # ── Валідація та commit ────────────────────────────────────────────────
+
+    @staticmethod
+    def _validate_char(char: str) -> bool:
+        """Дозволяє вводити тільки цифри."""
+        return char.isdigit()
+
+    def _commit(self, _=None):
+        """Читає текст поля, затискає в [min, max] і оновлює IntVar."""
+        raw = self._entry_var.get().strip()
+        try:
+            val = int(raw)
+        except ValueError:
+            val = self._min
+        val = max(self._min, min(self._max, val))
+        # Оновлюємо без рекурсії: тимчасово знімаємо trace
+        self._var.set(val)
+        self._entry_var.set(str(val))
+        self._update_states()
+
+    def _sync_from_var(self, *_):
+        """Синхронізує поле при зміні IntVar (напр. з +/−)."""
+        try:
+            self._entry_var.set(str(self._var.get()))
+        except tk.TclError:
+            pass
+        self._update_states()
+
+    # ── +/− ───────────────────────────────────────────────────────────────
 
     def _dec(self, _=None):
         v = self._var.get()
@@ -169,6 +224,8 @@ class CounterWidget(tk.Frame):
         if v < self._max:
             self._var.set(v + 1)
 
+    # ── Стан кнопок ───────────────────────────────────────────────────────
+
     def _update_states(self, *_):
         try:
             v = self._var.get()
@@ -176,7 +233,7 @@ class CounterWidget(tk.Frame):
             return
         self._btn_minus.configure(
             bg="#C8D0DA" if v <= self._min else "#E8EDF2",
-            fg=C_MUTED if v <= self._min else C_TEXT,
+            fg=C_MUTED   if v <= self._min else C_TEXT,
         )
         self._btn_plus.configure(
             bg=C_MUTED if v >= self._max else C_ACCENT,
