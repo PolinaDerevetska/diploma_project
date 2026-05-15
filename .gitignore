@@ -1,0 +1,30 @@
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# База даних (генерується автоматично)
+data/
+
+# Згенеровані тести та документи
+output/
+
+# macOS
+.DS_Store
+.AppleDouble
+
+# Тимчасові файли Word
+~$*.docx
+~$*.doc
+
+# Документи дипломної (не код)
+*.docx
+*.doc
+*.pdf
