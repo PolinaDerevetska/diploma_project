@@ -703,7 +703,7 @@ class GenerateFrame(tk.Frame):
             for i, sec in enumerate(mdata["sections"]):
                 sec_id = sec["id"]
                 avail = sec["available"]
-                saved = min(sec["saved_quota"], avail)
+                saved = 0
 
                 self._avail[sec_id] = avail
                 var = tk.IntVar(value=saved)
