@@ -24,14 +24,16 @@ log = logging.getLogger(__name__)
 # Відповідність позначень варіантів до стандартного A/B/C
 ANSWER_MAP = {
     "А": "A", "A": "A",
-    "В": "B", "B": "B",
+    "В": "B", "B": "B", "Б": "B",
     "С": "C", "C": "C",
 }
 
 # Відповідність букв у тексті питання до ключів option_a/b/c
+# Підтримуються обидва формати: А/В/С та А/Б/В
 OPTION_KEYS = {
     "А": "option_a", "A": "option_a",
     "В": "option_b", "B": "option_b",
+    "Б": "option_b",                   # формат А/Б/В
     "С": "option_c", "C": "option_c",
 }
 
@@ -135,25 +137,41 @@ def _extract_cell_content(cell, doc: Document) -> tuple[str, list[tuple[bytes, s
 
 def _parse_section_header(text: str) -> tuple[str, str] | None:
     """
-    Парсить заголовок секції виду «1.1 Арифметика» Рівень − 2 кількість − 6.
+    Парсить заголовок секції виду «1.1 Арифметика» Рівень − 2 кількість − 6
+    або "11.1 Назва\nкількість − 5" (без лапок).
     Повертає (code, name) або None якщо не відповідає шаблону.
     """
-    # Знаходимо текст у лапках «...»
-    m = re.search(r'[«"](.*?)[»"]', text)
-    if not m:
+    # Спочатку шукаємо текст у лапках «...»
+    m = re.search(r'[«"](.*?)[»"]', text, re.DOTALL)
+    if m:
+        inner = m.group(1).strip()
+    else:
+        # Формат без лапок: "11.1 Назва\nРівень − 2 кількість − 5"
+        # Беремо перший рядок до \n
+        first_line = text.split("\n")[0].strip()
+        # Перший токен — код секції у форматі X.Y або X.Y.Z
+        code_m = re.match(r'^(\d+\.\d+(?:\.\d+)?\.?)\s+(.*)', first_line)
+        if code_m:
+            code = code_m.group(1).rstrip(".")   # прибираємо: "10.1." → "10.1"
+            name = code_m.group(2).strip()
+            suffix = re.search(r'\(([a-zA-Zа-яА-ЯіІїЇєЄ])\)\s*$', name)
+            if suffix:
+                code = f"{code}({_normalize_suffix(suffix.group(1))})"
+            return code, name
         return None
-    inner = m.group(1).strip()   # "1.2 Алгебра(b)"
+    # "1.2 Алгебра(b)" або "1.2. Алгебра"
     # Перший токен — базовий код розділу (напр. "1.2"), решта — назва
     parts = inner.split(None, 1)
     if not parts:
         return None
-    code = parts[0].strip()
+    code = parts[0].strip().rstrip(".")   # прибираємо зайву крапку: "10.1." → "10.1"
     name = parts[1].strip() if len(parts) > 1 else code
-    # Якщо назва містить суфікс (a)/(b)/(c)/(а)/(b)/(с) — додаємо до коду,
-    # щоб розрізнити підрозділи: "1.2(a)" vs "1.2(b)"
-    suffix = re.search(r'\(([a-zA-Zа-яА-ЯіІїЇєЄ])\)\s*$', name)
-    if suffix:
-        code = f"{code}({_normalize_suffix(suffix.group(1))})"
+    # Якщо код вже містить суфікс (a)/(b)/(c) — не додаємо повторно
+    # Якщо ні, але назва закінчується суфіксом — переносимо його в код
+    if not re.search(r'\([a-zA-Z]\)$', code):
+        suffix = re.search(r'\(([a-zA-Zа-яА-ЯіІїЇєЄ])\)\s*$', name)
+        if suffix:
+            code = f"{code}({_normalize_suffix(suffix.group(1))})"
     return code, name
 
 
@@ -173,24 +191,25 @@ def _parse_question_row(cells: list[str]) -> dict | None:
     cells: [num, num, "Текст\nА) ...\nВ) ...\nС) ...", correct_answer, ...]
     Повертає словник з полями або None якщо рядок не є питанням.
     """
-    if len(cells) < 4:
+    if len(cells) < 3:
         return None
 
-    # Перший стовпець — номер (ціле число)
+    # Перший стовпець — номер питання (ціле число, або порожній/зірочка у деяких файлах)
     num_str = cells[0].strip()
-    if not num_str.isdigit():
+    if num_str.isdigit():
+        source_number = int(num_str)
+    elif num_str in ("", "*", "–", "-"):
+        source_number = 0  # Буде перезаписано лічильником у parse_module_file
+    else:
         return None
-
-    source_number = int(num_str)
 
     # Визначаємо позицію колонок:
-    # Структура 1 (7 кол): [num, num_дубль, питання, відповідь, ...]
-    # Структура 2 (6 кол): [num, питання_merged, питання_merged, відповідь, ...]
-    # Ознака структури 1: cells[1] є числом (або порожнє)
+    # Структура 1: [num, num_дубль, питання, відповідь, ...] — cells[1] є числом або порожнє
+    # Структура 2: [num, питання, відповідь, дата]            — cells[1] є текстом питання
     if len(cells) > 1 and (cells[1].strip().isdigit() or cells[1].strip() == ""):
         text_col, ans_col = 2, 3
     else:
-        text_col, ans_col = 1, 3
+        text_col, ans_col = 1, 2
 
     if text_col >= len(cells) or ans_col >= len(cells):
         return None
@@ -207,8 +226,8 @@ def _parse_question_row(cells: list[str]) -> dict | None:
     options: dict[str, str] = {}
 
     for line in lines:
-        # Шукаємо рядки вигляду "А) текст", "A) текст"
-        m = re.match(r'^([АВСABCавс])\s*[)\.]\s*(.*)', line)
+        # Шукаємо рядки вигляду "А) текст", "A) текст", "Б) текст"
+        m = re.match(r'^([АВСABCавсБб])\s*[)\.]\s*(.*)', line)
         if m:
             letter = m.group(1).upper()
             opt_text = m.group(2).strip()
@@ -221,10 +240,19 @@ def _parse_question_row(cells: list[str]) -> dict | None:
             else:
                 question_text += " " + line
 
+    # Якщо варіанти не знайдені (формат без маркерів А/В/С):
+    # рядки після першого вважаємо варіантами A, B, C
+    if not options and len(lines) >= 4:
+        question_text = lines[0]
+        option_lines = [ln for ln in lines[1:] if ln]
+        if len(option_lines) >= 3:
+            options["option_a"] = option_lines[0]
+            options["option_b"] = option_lines[1]
+            options["option_c"] = option_lines[2]
+
     # Перевірка наявності всіх трьох варіантів
     if not all(k in options for k in ("option_a", "option_b", "option_c")):
         log.warning("Неповні варіанти відповідей для питання %d: %s", source_number, raw_text[:60])
-        # Заповнюємо відсутні варіанти порожнім рядком
         for k in ("option_a", "option_b", "option_c"):
             options.setdefault(k, "")
 
@@ -251,6 +279,11 @@ def _extract_category_from_heading(text: str) -> str | None:
         raw = m.group(1).strip()
         # Нормалізуємо: "В1.1" (кирилиця) → "B1.1"
         raw = raw.replace("В", "B")
+        # Прибираємо зайву крапку в кінці (напр. "B1.1." → "B1.1")
+        raw = raw.rstrip(".")
+        # Додаємо префікс T, якщо ще не є TB-кодом
+        if raw.startswith("B1") or raw == "B2":
+            raw = "T" + raw
         return raw
     return None
 
@@ -291,7 +324,7 @@ def parse_module_file(
 
     if not category_order:
         # Якщо заголовків нема — спробуємо взяти стандартні три
-        category_order = ["B1.1", "B1.3", "B2"]
+        category_order = ["TB1.1", "TB1.3", "TB2"]
         log.warning("Заголовки категорій не знайдені, використовую стандартні: %s", category_order)
 
     tables = doc.tables
@@ -308,18 +341,27 @@ def parse_module_file(
             break
 
         cat_code = category_order[table_idx]
-        cat_id = db.insert_category(cat_code, db_path)
+
+        # TB1 (без підкатегорії) — питання застосовуються до обох підкатегорій
+        if cat_code in ("TB1", "B1"):
+            target_cats = ["TB1.1", "TB1.3"]
+        else:
+            target_cats = [cat_code]
+
+        # Отримуємо id для всіх цільових категорій
+        target_cat_ids = [db.insert_category(c, db_path) for c in target_cats]
 
         current_section_id: int | None = None
         saved_count = 0
         skipped_count = 0
+        auto_number = 0  # лічильник для рядків без номера
 
         for row_idx, row in enumerate(table.rows):
             cells      = [cell.text.strip() for cell in row.cells]
             raw_cells  = list(row.cells)  # зберігаємо об'єкти Cell для витягання зображень
 
             # Рядок-заголовок секції: перша клітинка містить "кількість"
-            if "кількість" in cells[0].lower() or "кількість" in cells[2].lower():
+            if "кількість" in cells[0].lower() or (len(cells) > 2 and "кількість" in cells[2].lower()):
                 header_text = cells[0] if "кількість" in cells[0].lower() else cells[2]
                 parsed = _parse_section_header(header_text)
                 if parsed:
@@ -329,7 +371,9 @@ def parse_module_file(
                 continue
 
             # Рядок заголовків стовпців — пропускаємо
-            if cells[0].lower() in ("№ питання", "№", ""):
+            if cells[0].lower() in ("№ питання", "№"):
+                continue
+            if len(cells) > 1 and "питання та варіанти" in cells[1].lower():
                 continue
             if len(cells) > 2 and "питання та варіанти" in cells[2].lower():
                 continue
@@ -362,39 +406,51 @@ def parse_module_file(
             if q is None:
                 continue
 
-            question_id = db.insert_question(
-                section_id=current_section_id,
-                category_id=cat_id,
-                source_number=q["source_number"],
-                question_text=q["question_text"],
-                option_a=q["option_a"],
-                option_b=q["option_b"],
-                option_c=q["option_c"],
-                correct_answer=q["correct_answer"],
-                db_path=db_path,
-            )
+            # Призначаємо автоматичний номер для питань без явного номера
+            if q["source_number"] == 0:
+                auto_number += 1
+                q["source_number"] = auto_number
+            else:
+                auto_number = q["source_number"]
 
-            # Зберігаємо зображення з контекстом та позицією всередині контексту
-            for context, field in [
-                ("question", q["question_text"]),
-                ("option_a", q["option_a"]),
-                ("option_b", q["option_b"]),
-                ("option_c", q["option_c"]),
-            ]:
-                local_idx = 0
-                for m_img in re.finditer(r'\[IMG_(\d+)\]', field):
-                    global_idx = int(m_img.group(1))
-                    if global_idx < len(cell_images):
-                        img_data, ext = cell_images[global_idx]
-                        db.insert_question_image(
-                            question_id, context, local_idx, ext, img_data, db_path
-                        )
-                        local_idx += 1
+            # Зберігаємо питання для кожної цільової категорії
+            for cat_id in target_cat_ids:
+                question_id = db.insert_question(
+                    section_id=current_section_id,
+                    category_id=cat_id,
+                    source_number=q["source_number"],
+                    question_text=q["question_text"],
+                    option_a=q["option_a"],
+                    option_b=q["option_b"],
+                    option_c=q["option_c"],
+                    correct_answer=q["correct_answer"],
+                    db_path=db_path,
+                )
+
+                # Зберігаємо зображення лише для першої категорії (щоб не дублювати BLOB)
+                if cat_id == target_cat_ids[0]:
+                    for context, field in [
+                        ("question", q["question_text"]),
+                        ("option_a", q["option_a"]),
+                        ("option_b", q["option_b"]),
+                        ("option_c", q["option_c"]),
+                    ]:
+                        local_idx = 0
+                        for m_img in re.finditer(r'\[IMG_(\d+)\]', field):
+                            global_idx = int(m_img.group(1))
+                            if global_idx < len(cell_images):
+                                img_data, ext = cell_images[global_idx]
+                                db.insert_question_image(
+                                    question_id, context, local_idx, ext, img_data, db_path
+                                )
+                                local_idx += 1
 
             saved_count += 1
 
-        log.info("  Категорія %s: збережено %d питань (пропущено %d)", cat_code, saved_count, skipped_count)
-        stats[cat_code] = saved_count
+        display_code = "/".join(target_cats)
+        log.info("  Категорія %s: збережено %d питань (пропущено %d)", display_code, saved_count, skipped_count)
+        for tc in target_cats:
+            stats[tc] = saved_count
 
     return stats
 

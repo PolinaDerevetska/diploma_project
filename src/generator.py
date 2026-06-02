@@ -72,7 +72,7 @@ def generate_test(
     Генерує унікальний варіант тесту для заданої категорії.
 
     Args:
-        category_code: код категорії ("B1.1", "B1.3" або "B2")
+        category_code: код категорії ("TB1.1", "TB1.3" або "TB2")
         student_name:  ПІБ здобувача (для титульного аркуша)
         seed:          фіксований seed для відтворюваності (None = справжній random)
         db_path:       шлях до БД
@@ -200,7 +200,7 @@ if __name__ == "__main__":
     # Швидка перевірка генератора
     logging.basicConfig(level=logging.INFO)
     try:
-        v = generate_test("B1.1", "Іваненко Іван Іванович")
+        v = generate_test("TB1.1", "Іваненко Іван Іванович")
         print(f"Згенеровано {v.total_questions} питань для {v.student_name}")
         print(f"Перше питання: {v.questions[0].question_text[:80]}...")
     except ValueError as e:

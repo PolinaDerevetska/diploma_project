@@ -30,6 +30,7 @@ from quota_loader import load_quotas_from_docx
 from generator import generate_test, generate_multiple_tests
 from exporter_docx import export_student_docx, export_answer_key_docx
 from exporter_pdf import export_student_pdf, export_answer_key_pdf
+from seed_db import auto_seed_if_needed
 
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "output")
 

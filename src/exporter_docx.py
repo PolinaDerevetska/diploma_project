@@ -434,7 +434,7 @@ if __name__ == "__main__":
     sys.path.insert(0, os.path.dirname(__file__))
     from generator import generate_test
 
-    v = generate_test("B1.1", "Тестовий Здобувач")
+    v = generate_test("TB1.1", "Тестовий Здобувач")
     out = os.path.join(os.path.dirname(os.path.dirname(__file__)), "output")
 
     student_file = export_student_docx(v, out)

@@ -23,6 +23,7 @@ import generator as gen
 import exporter_docx as ex_docx
 import parser as prs
 import quota_loader as ql
+import seed_db as seed
 
 # ─── Палітра кольорів ─────────────────────────────────────────────────────────
 C_SIDEBAR   = "#1E3A5F"
@@ -257,6 +258,9 @@ class App(tk.Tk):
         self.db_path    = tk.StringVar(value=db.DB_PATH)
         self.output_dir = tk.StringVar(value=os.path.join(_ROOT, "output"))
 
+        # Авто-ініціалізація БД при першому запуску
+        self._auto_seed()
+
         self._build()
         self._nav("generate")
 
@@ -281,7 +285,7 @@ class App(tk.Tk):
             ("generate", "✈   Генерація"),
             ("modules",  "📦  Модулі"),
             ("stats",    "📊  Статистика"),
-            ("settings", "⚙️   Налаштування"),
+            ("settings", "📖  Інструкція"),
         ]
         for key, label in nav:
             row = tk.Frame(self.sidebar, bg=C_SIDEBAR, cursor="hand2")
@@ -352,6 +356,11 @@ class App(tk.Tk):
                 w["row"].configure(bg=C_SIDEBAR)
                 w["bar"].configure(bg=C_SIDEBAR)
                 w["lbl"].configure(bg=C_SIDEBAR, fg="#8DAFC8")
+        # Скидаємо глобальний скрол — on_show кожної вкладки встановить свій
+        try:
+            self.unbind_all("<MouseWheel>")
+        except Exception:
+            pass
         self._frames[key].tkraise()
         if hasattr(self._frames[key], "on_show"):
             self._frames[key].on_show()
@@ -359,6 +368,16 @@ class App(tk.Tk):
     def set_status(self, text, color=C_MUTED):
         self._status_lbl.configure(text=text, fg=color)
         self.update_idletasks()
+
+    def _auto_seed(self):
+        """Автоматично ініціалізує БД нормами при першому запуску."""
+        dp = self.db_path.get()
+        if seed.needs_seeding(dp):
+            ok = seed.auto_seed_if_needed(dp)
+            if not ok:
+                # Файл таблиці норм не знайдено — повідомимо користувача пізніше
+                # через вкладку Модулі (не блокуємо запуск)
+                pass
 
 
 # ─── Вкладка: Генерація (5-крокова форма-wizard) ─────────────────────────────
@@ -372,7 +391,7 @@ class GenerateFrame(tk.Frame):
         self._step = 0
 
         # Змінні вибору
-        self._cat_var       = tk.StringVar(value="B1.1")
+        self._cat_var       = tk.StringVar(value="TB1.1")
         self._variants_var  = tk.IntVar(value=1)
         self._quota_vars    = {}   # section_id -> tk.IntVar
         self._avail         = {}   # section_id -> int
@@ -466,16 +485,16 @@ class GenerateFrame(tk.Frame):
                  font=("Helvetica", 48)).pack(pady=(0, 8))
         tk.Label(wrap, text="Оберіть категорію здобувача",
                  bg=C_BG, fg=C_SIDEBAR, font=("Helvetica", 16, "bold")).pack()
-        tk.Label(wrap, text="EASA Part 147 — B1.1 / B1.3 / B2",
+        tk.Label(wrap, text="EASA Part 147 — TB1.1 / TB1.3 / TB2",
                  bg=C_BG, fg=C_MUTED, font=("Helvetica", 11)).pack(pady=(2, 24))
 
         cards_row = tk.Frame(wrap, bg=C_BG)
         cards_row.pack()
 
         cat_info = {
-            "B1.1": ("Авіаційний механік\nповітряне судно з ГТД\n(газотурбінний двигун)", "⚙️"),
-            "B1.3": ("Авіаційний механік\nповітряне судно з ПД\n(поршневий двигун)", "🔧"),
-            "B2":   ("Авіаційний механік\nавіоніка та електроніка", "📡"),
+            "TB1.1": ("Авіаційний механік\nгазотурбінний літак", "⚙️"),
+            "TB1.3": ("Авіаційний механік\nгазотурбінний вертольот", "🔧"),
+            "TB2":   ("Авіаційний механік\nавіоніка", "📡"),
         }
 
         for cat, (desc, icon) in cat_info.items():
@@ -582,6 +601,7 @@ class GenerateFrame(tk.Frame):
         self._q1_canvas.bind("<Configure>", _on_canvas_resize)
         self._q1_canvas.bind("<MouseWheel>", _on_mw)
         self._q1_inner.bind("<MouseWheel>", _on_mw)
+        self._q1_scroll_fn = _on_mw
 
         # Нижня панель
         bot = tk.Frame(page, bg=C_BG)
@@ -607,7 +627,8 @@ class GenerateFrame(tk.Frame):
         cat_code = self._cat_var.get()
 
         try:
-            sections = db.get_sections_by_category(cat_id, dp)
+            # Використовуємо нову функцію — лише розділи з quota>0 для категорії
+            sections = db.get_sections_for_category_with_quotas(cat_id, dp)
         except Exception as e:
             tk.Label(inner, text=f"Помилка завантаження: {e}",
                      bg=C_BG, fg=C_DANGER, font=FONT_SM).pack(pady=20)
@@ -615,8 +636,8 @@ class GenerateFrame(tk.Frame):
 
         if not sections:
             tk.Label(inner,
-                     text=f"Немає питань для категорії {cat_code}.\n"
-                          "Спочатку імпортуйте модулі на вкладці «Модулі».",
+                     text=f"Норми для категорії {cat_code} не завантажені.\n"
+                          "Спочатку завантажте таблицю норм на вкладці «Модулі».",
                      bg=C_BG, fg=C_WARNING, font=FONT_SM,
                      justify="left").pack(pady=20, padx=4)
             return
@@ -690,8 +711,9 @@ class GenerateFrame(tk.Frame):
             for txt, w, side in [
                 ("Розділ", 10, "left"),
                 ("Назва", 0, "left"),
+                ("Норма", 5, "right"),
                 ("В БД", 6, "right"),
-                ("Норма", 9, "right"),
+                ("Задати", 9, "right"),
             ]:
                 tk.Label(col_hdr, text=txt, width=w if w else None,
                          bg="#EEF2F7", fg=C_SIDEBAR,
@@ -702,11 +724,13 @@ class GenerateFrame(tk.Frame):
 
             for i, sec in enumerate(mdata["sections"]):
                 sec_id = sec["id"]
-                avail = sec["available"]
-                saved = 0
+                avail  = sec["available"]   # питань у БД (може бути 0)
+                quota  = sec["quota"]        # норма з таблиці (завжди > 0)
 
                 self._avail[sec_id] = avail
-                var = tk.IntVar(value=saved)
+                # Початкове значення лічильника = норма з таблиці (але не більше доступних)
+                init_val = min(quota, avail) if avail > 0 else quota
+                var = tk.IntVar(value=init_val)
                 self._quota_vars[sec_id] = var
 
                 bg = C_CARD if i % 2 == 0 else C_ROW_ALT
@@ -718,12 +742,18 @@ class GenerateFrame(tk.Frame):
                          bg=bg, fg=C_MUTED, font=FONT_SM,
                          anchor="w", padx=4, pady=4).pack(side="left")
 
-                name_txt = sec["section_name"][:32]
-                tk.Label(row, text=name_txt,
+                tk.Label(row, text=sec["section_name"],
                          bg=bg, fg=C_TEXT, font=FONT_SM,
-                         anchor="w").pack(side="left", fill="x", expand=True,
-                                          padx=4)
+                         anchor="w", wraplength=480, justify="left").pack(
+                    side="left", fill="x", expand=True, padx=4)
 
+                # Стовпець "Норма" (з таблиці)
+                tk.Label(row, text=str(quota), width=5,
+                         bg=bg, fg=C_MUTED,
+                         font=("Helvetica", 10),
+                         anchor="e").pack(side="right", padx=(0, 4))
+
+                # Стовпець "В БД" — зелений якщо є, червоний якщо немає
                 avail_color = C_SUCCESS if avail > 0 else C_DANGER
                 tk.Label(row, text=str(avail), width=5,
                          bg=bg, fg=avail_color,
@@ -731,7 +761,7 @@ class GenerateFrame(tk.Frame):
                          anchor="e").pack(side="right", padx=(0, 8))
 
                 cw = CounterWidget(row, var,
-                                   min_val=0, max_val=avail,
+                                   min_val=0, max_val=max(avail, quota),
                                    font_size=11, bg=bg)
                 cw.pack(side="right", padx=(0, 8), pady=2)
                 _bind_mw(cw)
@@ -945,146 +975,279 @@ class GenerateFrame(tk.Frame):
         self.after(0, _finish)
 
     def on_show(self):
-        pass   # нічого не робимо при перемиканні вкладки
+        # Активуємо скрол для вкладки генерації
+        if hasattr(self, "_q1_scroll_fn"):
+            self.bind_all("<MouseWheel>", self._q1_scroll_fn)
 
 
 # ─── Вкладка: Модулі ─────────────────────────────────────────────────────────
 
 class ModulesFrame(tk.Frame):
+    """
+    Вкладка «Модулі».
+
+    Зверху — горизонтальна сітка плиток модулів (4 колонки):
+      🟢 зелена рамка + кількість питань  — модуль завантажено
+      ⚪ сіра рамка                        — модуль не завантажено
+    Клік на плитку — виділяє модуль і відкриває панель завантаження знизу.
+
+    Знизу — два блоки: таблиця норм | завантаження обраного модуля.
+    """
+
+    _DEFAULT_MODULES = [
+        ("1",  "Математика"),
+        ("2",  "Фізика"),
+        ("3",  "Основи електротехніки"),
+        ("4",  "Основи електроніки"),
+        ("5",  "Цифрові техніки / Системи приладів"),
+        ("6",  "Матеріали та обладнання"),
+        ("7",  "Практика технічного обслуговування"),
+        ("8",  "Основи аеродинаміки"),
+        ("9",  "Людський фактор"),
+        ("10", "Авіаційне законодавство"),
+        ("11A", "Аеродинаміка, конструкції та системи ПС з ГТД"),
+        ("11B", "Аеродинаміка, конструкції та системи ПС з ПД"),
+        ("12", "Аеродинаміка, конструкції та системи вертольотів"),
+        ("13", "Конструкція та системи ПС"),
+        ("14", "Двигун"),
+        ("15", "Газова турбіна"),
+        ("16", "Поршневий двигун"),
+        ("17", "Гвинт"),
+    ]
+    _GRID_COLS = 4  # плиток у рядку
+
     def __init__(self, parent, app):
         super().__init__(parent, bg=C_BG)
         self.app = app
+        self._tile_info: dict[str, dict] = {}   # code -> {frame, ...}
+        self._selected_code: str | None = None
         self._build()
+
+    # ── Побудова каркасу ──────────────────────────────────────────────────────
 
     def _build(self):
         tk.Label(self, text="Модулі та імпорт даних",
                  bg=C_BG, fg=C_SIDEBAR, font=FONT_TITLE).pack(
-            anchor="w", padx=24, pady=(20, 12))
+            anchor="w", padx=24, pady=(20, 10))
 
-        body = tk.Frame(self, bg=C_BG)
-        body.pack(fill="both", expand=True, padx=24, pady=4)
-        body.columnconfigure(0, weight=3)
-        body.columnconfigure(1, weight=2)
-        body.rowconfigure(0, weight=1)
+        # Легенда
+        leg = tk.Frame(self, bg=C_BG)
+        leg.pack(anchor="w", padx=24, pady=(0, 8))
+        for color, text in [(C_SUCCESS, "завантажено"), ("#BDC3C7", "не завантажено")]:
+            tk.Label(leg, text="●", bg=C_BG, fg=color,
+                     font=("Helvetica", 14)).pack(side="left")
+            tk.Label(leg, text=text + "    ", bg=C_BG, fg=C_MUTED,
+                     font=("Helvetica", 10)).pack(side="left")
 
-        # ── Ліво: таблиця завантажених модулів ───────────────────────────────
-        left_outer, left_inner = card(body, "Завантажені модулі")
-        left_outer.grid(row=0, column=0, sticky="nsew", padx=(0, 8), pady=(0, 16))
+        # ── Прокручувана сітка плиток ─────────────────────────────────────────
+        grid_outer = tk.Frame(self, bg=C_BG)
+        grid_outer.pack(fill="x", padx=24, pady=(0, 12))
 
-        style = ttk.Style()
-        style.configure("Mod.Treeview",
-                        font=FONT_SM, rowheight=24,
-                        background=C_CARD, fieldbackground=C_CARD,
-                        foreground=C_TEXT, borderwidth=0)
-        style.configure("Mod.Treeview.Heading",
-                        font=("Helvetica", 10, "bold"),
-                        background="#EEF2F7", foreground=C_SIDEBAR,
-                        relief="flat")
-        style.map("Mod.Treeview",
-                  background=[("selected", "#D6EAF8")],
-                  foreground=[("selected", C_TEXT)])
+        grid_canvas = tk.Canvas(grid_outer, bg=C_BG, highlightthickness=0)
+        grid_vsb = ttk.Scrollbar(grid_outer, orient="vertical",
+                                  command=grid_canvas.yview)
+        grid_canvas.configure(yscrollcommand=grid_vsb.set, height=230)
+        grid_canvas.pack(side="left", fill="x", expand=True)
+        grid_vsb.pack(side="right", fill="y")
 
-        tree_wrap = tk.Frame(left_inner, bg=C_CARD)
-        tree_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 12))
-        tree_wrap.rowconfigure(0, weight=1)
-        tree_wrap.columnconfigure(0, weight=1)
+        self._grid_frame = tk.Frame(grid_canvas, bg=C_BG)
+        self._grid_win = grid_canvas.create_window(
+            (0, 0), window=self._grid_frame, anchor="nw")
 
-        cols = ("mod", "name", "b11", "b13", "b2")
-        self._mod_tree = ttk.Treeview(tree_wrap, columns=cols,
-                                       show="headings",
-                                       style="Mod.Treeview")
-        for col, lbl, w, anc in [
-            ("mod",  "Код",    55,  "center"),
-            ("name", "Назва",  200, "w"),
-            ("b11",  "B1.1",  65,  "center"),
-            ("b13",  "B1.3",  65,  "center"),
-            ("b2",   "B2",    65,  "center"),
-        ]:
-            self._mod_tree.heading(col, text=lbl)
-            self._mod_tree.column(col, width=w, anchor=anc,
-                                   stretch=(col == "name"))
-        self._mod_tree.tag_configure("even", background=C_CARD)
-        self._mod_tree.tag_configure("odd",  background=C_ROW_ALT)
+        self._grid_frame.bind("<Configure>",
+            lambda e: grid_canvas.configure(
+                scrollregion=grid_canvas.bbox("all")))
+        grid_canvas.bind("<Configure>",
+            lambda e: grid_canvas.itemconfig(self._grid_win, width=e.width))
 
-        vsb = ttk.Scrollbar(tree_wrap, orient="vertical",
-                             command=self._mod_tree.yview)
-        self._mod_tree.configure(yscrollcommand=vsb.set)
-        vsb.grid(row=0, column=1, sticky="ns")
-        self._mod_tree.grid(row=0, column=0, sticky="nsew")
+        def _mw(e): grid_canvas.yview_scroll(
+            -e.delta if _IS_MAC else -(e.delta // 120), "units")
+        grid_canvas.bind("<MouseWheel>", _mw)
+        self._grid_frame.bind("<MouseWheel>", _mw)
+        self._grid_canvas = grid_canvas
+        self._grid_scroll_fn = _mw
 
-        refresh_row = tk.Frame(left_inner, bg=C_CARD)
-        refresh_row.pack(fill="x", padx=12, pady=(0, 8))
-        ghost_btn(refresh_row, "🔄  Оновити", self._refresh_modules).pack(side="left")
+        # ── Нижня панель: норми | завантаження ───────────────────────────────
+        bot = tk.Frame(self, bg=C_BG)
+        bot.pack(fill="x", padx=24, pady=(0, 16))
+        bot.columnconfigure(0, weight=1)
+        bot.columnconfigure(1, weight=1)
 
-        # ── Право: форма імпорту + журнал ────────────────────────────────────
-        right = tk.Frame(body, bg=C_BG)
-        right.grid(row=0, column=1, sticky="nsew", pady=(0, 16))
-        right.rowconfigure(2, weight=1)
-
-        # Таблиця норм
-        outer1, inner1 = card(right, "1.  Таблиця норм")
-        outer1.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        # Блок норм
+        outer1, inner1 = card(bot, "Таблиця норм  (завантажується один раз)")
+        outer1.grid(row=0, column=0, sticky="nsew", padx=(0, 8))
 
         self.quota_path = tk.StringVar()
         self._file_row(inner1, self.quota_path, "Таблиця по категоріям.docx", "*.docx")
-        accent_btn(inner1, "Завантажити норми",
-                   self._import_quotas).pack(fill="x", padx=16, pady=(6, 14))
 
-        # Файл модуля
-        outer2, inner2 = card(right, "2.  Файл модуля (питання)")
-        outer2.grid(row=1, column=0, sticky="ew", pady=(0, 8))
+        self._norm_status_lbl = tk.Label(inner1, text="",
+                                          bg=C_CARD, fg=C_MUTED,
+                                          font=("Helvetica", 10))
+        self._norm_status_lbl.pack(anchor="w", padx=16, pady=(4, 0))
+        accent_btn(inner1, "Завантажити норми",
+                   self._import_quotas).pack(fill="x", padx=16, pady=(8, 14))
+
+        # Блок завантаження модуля
+        outer2, inner2 = card(bot, "Завантаження модуля")
+        outer2.grid(row=0, column=1, sticky="nsew")
+
+        self._sel_lbl = tk.Label(inner2,
+                                  text="↑ Оберіть модуль зі списку вище",
+                                  bg=C_CARD, fg=C_MUTED,
+                                  font=("Helvetica", 11, "italic"))
+        self._sel_lbl.pack(anchor="w", padx=16, pady=(10, 4))
 
         self.module_path = tk.StringVar()
         self._file_row(inner2, self.module_path, "Файл модуля (.docx)", "*.docx")
 
-        meta = tk.Frame(inner2, bg=C_CARD)
-        meta.pack(fill="x", padx=16, pady=(8, 0))
-
-        tk.Label(meta, text="Код:", bg=C_CARD,
-                 fg=C_TEXT, font=FONT_SM).grid(row=0, column=0, sticky="w")
-        self.mod_code = tk.Entry(meta, width=6, font=FONT_SM,
-                                 bg="#F7FAFC", relief="flat",
-                                 highlightthickness=1,
-                                 highlightbackground=C_BORDER)
-        self.mod_code.insert(0, "1")
-        self.mod_code.grid(row=0, column=1, padx=(4, 14), pady=3, sticky="w")
-
-        tk.Label(meta, text="Назва:", bg=C_CARD,
-                 fg=C_TEXT, font=FONT_SM).grid(row=0, column=2, sticky="w")
-        self.mod_name = tk.Entry(meta, font=FONT_SM, bg="#F7FAFC",
-                                 relief="flat", highlightthickness=1,
-                                 highlightbackground=C_BORDER)
-        self.mod_name.insert(0, "Математика")
-        self.mod_name.grid(row=0, column=3, padx=4, pady=3, sticky="ew")
-        meta.columnconfigure(3, weight=1)
+        # Статус імпорту
+        self._import_status_lbl = tk.Label(inner2, text="",
+                                            bg=C_CARD, fg=C_MUTED,
+                                            font=("Helvetica", 10))
+        self._import_status_lbl.pack(anchor="w", padx=16, pady=(4, 0))
 
         accent_btn(inner2, "Імпортувати модуль",
-                   self._import_module).pack(fill="x", padx=16, pady=(10, 14))
+                   self._import_module).pack(fill="x", padx=16, pady=(8, 14))
 
-        # Журнал
-        outer3, inner3 = card(right, "Журнал")
-        outer3.grid(row=2, column=0, sticky="nsew", pady=(0, 0))
-        right.columnconfigure(0, weight=1)
+    # ── Сітка плиток ─────────────────────────────────────────────────────────
 
-        log_wrap = tk.Frame(inner3, bg=C_CARD)
-        log_wrap.pack(fill="both", expand=True, padx=12, pady=(0, 8))
-        log_wrap.rowconfigure(0, weight=1)
-        log_wrap.columnconfigure(0, weight=1)
+    def _build_module_grid(self):
+        """Відмальовує плитки модулів у сітці."""
+        frame = self._grid_frame
+        for w in frame.winfo_children():
+            w.destroy()
+        self._tile_info.clear()
 
-        self.log = tk.Text(log_wrap, font=FONT_MONO, bg="#F7FAFC", fg=C_TEXT,
-                           relief="flat", bd=0, state="disabled",
-                           highlightthickness=1, highlightbackground=C_BORDER,
-                           wrap="word", height=8)
-        vsb2 = ttk.Scrollbar(log_wrap, command=self.log.yview)
-        self.log.configure(yscrollcommand=vsb2.set)
-        self.log.grid(row=0, column=0, sticky="nsew")
-        vsb2.grid(row=0, column=1, sticky="ns")
+        dp = self.app.db_path.get()
+        q_counts: dict[str, int] = {}
+        module_names: dict[str, str] = {}
 
-        self.log.tag_configure("ok",   foreground=C_SUCCESS)
-        self.log.tag_configure("err",  foreground=C_DANGER)
-        self.log.tag_configure("info", foreground=C_ACCENT)
-        self.log.tag_configure("warn", foreground=C_WARNING)
-        self._log("Готово до роботи.", "info")
+        if os.path.exists(dp):
+            try:
+                conn = sqlite3.connect(dp)
+                conn.row_factory = sqlite3.Row
+                rows = conn.execute("""
+                    SELECT m.code, m.name, COUNT(q.id) AS cnt
+                    FROM modules m
+                    LEFT JOIN sections s ON s.module_id = m.id
+                    LEFT JOIN questions q ON q.section_id = s.id
+                    GROUP BY m.id
+                    ORDER BY CAST(m.code AS INTEGER)
+                """).fetchall()
+                conn.close()
+                for r in rows:
+                    q_counts[r["code"]] = r["cnt"]
+                    module_names[r["code"]] = r["name"]
+            except Exception:
+                pass
+
+        display = (
+            [(c, module_names[c]) for c in sorted(
+                module_names.keys(),
+                key=lambda x: int(x) if x.isdigit() else 99)]
+            if module_names else self._DEFAULT_MODULES
+        )
+
+        # Налаштовуємо колонки сітки
+        for col in range(self._GRID_COLS):
+            frame.columnconfigure(col, weight=1, uniform="tile")
+
+        for idx, (code, name) in enumerate(display):
+            cnt    = q_counts.get(code, 0)
+            loaded = cnt > 0
+            row_i  = idx // self._GRID_COLS
+            col_i  = idx % self._GRID_COLS
+
+            brd_color = C_SUCCESS if loaded else "#BDC3C7"
+            tile = tk.Frame(frame,
+                            bg=C_CARD,
+                            highlightthickness=2,
+                            highlightbackground=brd_color,
+                            cursor="hand2",
+                            padx=10, pady=8)
+            tile.grid(row=row_i, column=col_i,
+                      sticky="nsew", padx=4, pady=4)
+
+            # Рядок: індикатор + код
+            top = tk.Frame(tile, bg=C_CARD)
+            top.pack(fill="x")
+            tk.Label(top, text="●", bg=C_CARD,
+                     fg=brd_color,
+                     font=("Helvetica", 11)).pack(side="left")
+            tk.Label(top, text=f"M{code}", bg=C_CARD,
+                     fg=C_SIDEBAR,
+                     font=("Helvetica", 11, "bold")).pack(side="left", padx=4)
+            if loaded:
+                tk.Label(top, text=f"{cnt} пит.", bg=C_CARD,
+                         fg=C_SUCCESS,
+                         font=("Helvetica", 9)).pack(side="right")
+
+            # Назва (обрізаємо якщо довга)
+            short_name = name if len(name) <= 28 else name[:26] + "…"
+            tk.Label(tile, text=short_name, bg=C_CARD,
+                     fg=C_TEXT if loaded else C_MUTED,
+                     font=("Helvetica", 9),
+                     justify="left", anchor="w",
+                     wraplength=160).pack(anchor="w", pady=(4, 0))
+
+            self._tile_info[code] = {
+                "tile": tile, "loaded": loaded,
+                "name": name, "code": code,
+                "brd_base": brd_color,
+            }
+
+            def _sel(e=None, c=code, n=name): self._on_select(c, n)
+            def _mw(e):
+                self._grid_canvas.yview_scroll(
+                    -e.delta if _IS_MAC else -(e.delta // 120), "units")
+
+            for w in [tile] + tile.winfo_children() + \
+                     [gc for t in tile.winfo_children()
+                      for gc in (t.winfo_children() if hasattr(t, "winfo_children") else [])]:
+                try:
+                    w.bind("<Button-1>", _sel)
+                    w.bind("<MouseWheel>", _mw)
+                except Exception:
+                    pass
+
+        # Відновлюємо виділення
+        if self._selected_code and self._selected_code in self._tile_info:
+            self._highlight_tile(self._selected_code)
+
+    def _on_select(self, code: str, name: str):
+        self._selected_code = code
+        self._highlight_tile(code)
+        self._sel_lbl.configure(
+            text=f"Вибрано: M{code} — {name}", fg=C_SIDEBAR)
+        self.module_path.set("")
+        self._import_status_lbl.configure(text="")
+
+    def _highlight_tile(self, code: str):
+        C_SEL = "#1A6A8A"
+        for c, info in self._tile_info.items():
+            if c == code:
+                info["tile"].configure(highlightbackground=C_SEL, bg="#EBF5FB")
+                for ch in info["tile"].winfo_children():
+                    try:
+                        ch.configure(bg="#EBF5FB")
+                        for gc in ch.winfo_children():
+                            try: gc.configure(bg="#EBF5FB")
+                            except Exception: pass
+                    except Exception:
+                        pass
+            else:
+                brd = info["brd_base"]
+                info["tile"].configure(highlightbackground=brd, bg=C_CARD)
+                for ch in info["tile"].winfo_children():
+                    try:
+                        ch.configure(bg=C_CARD)
+                        for gc in ch.winfo_children():
+                            try: gc.configure(bg=C_CARD)
+                            except Exception: pass
+                    except Exception:
+                        pass
+
+    # ── Допоміжні методи ─────────────────────────────────────────────────────
 
     def _file_row(self, parent, var, placeholder, pattern):
         row = tk.Frame(parent, bg=C_CARD)
@@ -1106,48 +1269,30 @@ class ModulesFrame(tk.Frame):
         if f:
             var.set(f)
 
-    def _log(self, msg, tag=""):
-        self.log.configure(state="normal")
-        self.log.insert("end", msg + "\n", tag)
-        self.log.see("end")
-        self.log.configure(state="disabled")
-
-    def _refresh_modules(self):
-        for item in self._mod_tree.get_children():
-            self._mod_tree.delete(item)
-
+    def _update_norm_status(self):
         dp = self.app.db_path.get()
         if not os.path.exists(dp):
+            self._norm_status_lbl.configure(text="БД не знайдена", fg=C_DANGER)
             return
         try:
-            conn = sqlite3.connect(dp)
-            conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
-                SELECT m.code AS mc, m.name AS mn,
-                    SUM(CASE WHEN cat.code='B1.1' THEN 1 ELSE 0 END) AS b11,
-                    SUM(CASE WHEN cat.code='B1.3' THEN 1 ELSE 0 END) AS b13,
-                    SUM(CASE WHEN cat.code='B2'   THEN 1 ELSE 0 END) AS b2
-                FROM questions q
-                JOIN sections  s    ON s.id   = q.section_id
-                JOIN modules   m    ON m.id   = s.module_id
-                JOIN categories cat ON cat.id = q.category_id
-                GROUP BY m.id
-                ORDER BY CAST(m.code AS INTEGER)
-            """).fetchall()
-            conn.close()
-            for i, r in enumerate(rows):
-                tag = "even" if i % 2 == 0 else "odd"
-                self._mod_tree.insert("", "end", tags=(tag,), values=(
-                    f"M{r['mc']}", r["mn"],
-                    r["b11"] or "—",
-                    r["b13"] or "—",
-                    r["b2"]  or "—",
-                ))
+            stats = db.get_db_stats(dp)
+            if stats["quotas"] > 0:
+                self._norm_status_lbl.configure(
+                    text=f"✓ {stats['sections']} розділів, {stats['quotas']} норм",
+                    fg=C_SUCCESS)
+            else:
+                self._norm_status_lbl.configure(
+                    text="Норми не завантажені", fg=C_WARNING)
         except Exception:
-            pass
+            self._norm_status_lbl.configure(text="Помилка читання БД", fg=C_DANGER)
 
     def on_show(self):
-        self._refresh_modules()
+        self._build_module_grid()
+        self._update_norm_status()
+        if hasattr(self, "_grid_scroll_fn"):
+            self.bind_all("<MouseWheel>", self._grid_scroll_fn)
+
+    # ── Операції ─────────────────────────────────────────────────────────────
 
     def _import_quotas(self):
         path = self.quota_path.get().strip()
@@ -1155,47 +1300,49 @@ class ModulesFrame(tk.Frame):
             messagebox.showwarning("Увага", "Оберіть файл таблиці норм!")
             return
         dp = self.app.db_path.get()
-        self._log(f"→ Завантаження норм: {os.path.basename(path)}", "info")
+        self.app.set_status("Завантажуємо норми…", C_ACCENT)
 
         def worker():
             try:
                 db.init_db(dp)
                 ql.load_quotas_from_docx(path, dp)
                 s = db.get_db_stats(dp)
-                self._log(
-                    f"✓ Норми завантажено. Розділів: {s['sections']}, норм: {s['quotas']}",
-                    "ok")
-                self.app.set_status("Норми завантажено", C_SUCCESS)
-                self.after(0, self._refresh_modules)
+                self.app.set_status(
+                    f"✓ Норми завантажено: {s['sections']} розділів", C_SUCCESS)
+                self.after(0, self._build_module_grid)
+                self.after(0, self._update_norm_status)
             except Exception as e:
-                self._log(f"✗ Помилка: {e}", "err")
                 self.app.set_status(f"Помилка: {e}", C_DANGER)
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _import_module(self):
-        path = self.module_path.get().strip()
-        code = self.mod_code.get().strip()
-        name = self.mod_name.get().strip()
-        if not path or not os.path.exists(path):
-            messagebox.showwarning("Увага", "Оберіть файл модуля!")
+        if not self._selected_code:
+            messagebox.showwarning("Увага", "Спочатку оберіть модуль зі списку!")
             return
-        if not code or not name:
-            messagebox.showwarning("Увага", "Введіть код і назву модуля!")
+        path = self.module_path.get().strip()
+        if not path or not os.path.exists(path):
+            messagebox.showwarning("Увага", "Оберіть файл модуля (.docx)!")
             return
 
-        dp = self.app.db_path.get()
-        self._log(f"→ Імпорт M{code} — {name}: {os.path.basename(path)}", "info")
+        code = self._selected_code
+        name = self._tile_info[code]["name"] if code in self._tile_info else code
+        dp   = self.app.db_path.get()
+
+        self._import_status_lbl.configure(text="Імпортуємо…", fg=C_ACCENT)
+        self.app.set_status(f"Імпорт M{code}…", C_ACCENT)
 
         def worker():
             try:
                 result = prs.parse_module_file(path, code, name, dp)
-                total = sum(result.values())
-                self._log(f"✓ Імпортовано {total} питань: {result}", "ok")
+                total  = sum(result.values())
+                self.after(0, lambda: self._import_status_lbl.configure(
+                    text=f"✓ Імпортовано {total} питань", fg=C_SUCCESS))
                 self.app.set_status(f"Імпорт завершено: {total} питань", C_SUCCESS)
-                self.after(0, self._refresh_modules)
+                self.after(0, self._build_module_grid)
             except Exception as e:
-                self._log(f"✗ Помилка: {e}", "err")
+                self.after(0, lambda: self._import_status_lbl.configure(
+                    text=f"✗ {e}", fg=C_DANGER))
                 self.app.set_status(f"Помилка: {e}", C_DANGER)
 
         threading.Thread(target=worker, daemon=True).start()
@@ -1204,228 +1351,494 @@ class ModulesFrame(tk.Frame):
 # ─── Вкладка: Статистика ─────────────────────────────────────────────────────
 
 class StatsFrame(tk.Frame):
+    """
+    Вкладка «Статистика».
+
+    Верхній блок — три плитки готовності по категоріях (B1.1 / B1.3 / B2):
+    відсоток завантажених питань відносно сумарної норми + колірний статус.
+
+    Нижній блок — картки по кожному модулю:
+    назва + горизонтальна смуга прогресу + бейджики категорій.
+    """
+
+    # Кольори рівнів готовності
+    _READY_COLORS = [
+        (80, C_SUCCESS,  "Готовий"),
+        (40, C_WARNING,  "Частково"),
+        (0,  C_DANGER,   "Не готовий"),
+    ]
+
     def __init__(self, parent, app):
         super().__init__(parent, bg=C_BG)
         self.app = app
+        self._scroll_fn = None
         self._build()
+
+    # ── Побудова каркасу ──────────────────────────────────────────────────────
 
     def _build(self):
         hdr = tk.Frame(self, bg=C_BG)
-        hdr.pack(fill="x", padx=24, pady=(20, 12))
+        hdr.pack(fill="x", padx=24, pady=(20, 10))
         tk.Label(hdr, text="Статистика бази даних",
                  bg=C_BG, fg=C_SIDEBAR, font=FONT_TITLE).pack(side="left")
         ghost_btn(hdr, "🔄  Оновити", self.on_show).pack(side="right")
 
-        self._cards_row = tk.Frame(self, bg=C_BG)
-        self._cards_row.pack(fill="x", padx=24, pady=(0, 12))
+        # Плитки готовності категорій (заповнюються в on_show)
+        self._cat_tiles = tk.Frame(self, bg=C_BG)
+        self._cat_tiles.pack(fill="x", padx=24, pady=(0, 14))
 
-        outer, inner = card(self, "Кількість питань по модулях та категоріях")
-        outer.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        # Прокручувана область з картками модулів
+        wrap = tk.Frame(self, bg=C_BG)
+        wrap.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        wrap.rowconfigure(0, weight=1)
+        wrap.columnconfigure(0, weight=1)
 
-        style = ttk.Style()
-        style.configure("Stats.Treeview",
-                        font=FONT_SM, rowheight=26,
-                        background=C_CARD, fieldbackground=C_CARD,
-                        foreground=C_TEXT, borderwidth=0)
-        style.configure("Stats.Treeview.Heading",
-                        font=("Helvetica", 11, "bold"),
-                        background="#EEF2F7", foreground=C_SIDEBAR,
-                        relief="flat")
-        style.map("Stats.Treeview",
-                  background=[("selected", "#D6EAF8")],
-                  foreground=[("selected", C_TEXT)])
-
-        tree_wrap = tk.Frame(inner, bg=C_CARD)
-        tree_wrap.pack(fill="both", expand=True, padx=16, pady=(4, 12))
-        tree_wrap.rowconfigure(0, weight=1)
-        tree_wrap.columnconfigure(0, weight=1)
-
-        cols = ("module", "b11", "b13", "b2", "total")
-        self.tree = ttk.Treeview(tree_wrap, columns=cols,
-                                  show="headings", style="Stats.Treeview")
-        for col, lbl, w, anc in [
-            ("module", "Модуль",  280, "w"),
-            ("b11",    "B1.1",   100, "center"),
-            ("b13",    "B1.3",   100, "center"),
-            ("b2",     "B2",     100, "center"),
-            ("total",  "Всього", 100, "center"),
-        ]:
-            self.tree.heading(col, text=lbl)
-            self.tree.column(col, width=w, anchor=anc, stretch=(col == "module"))
-
-        vsb = ttk.Scrollbar(tree_wrap, orient="vertical",
-                             command=self.tree.yview)
-        self.tree.configure(yscrollcommand=vsb.set)
+        self._canvas = tk.Canvas(wrap, bg=C_BG, highlightthickness=0)
+        vsb = ttk.Scrollbar(wrap, orient="vertical", command=self._canvas.yview)
+        self._canvas.configure(yscrollcommand=vsb.set)
+        self._canvas.grid(row=0, column=0, sticky="nsew")
         vsb.grid(row=0, column=1, sticky="ns")
-        self.tree.grid(row=0, column=0, sticky="nsew")
 
-        self.tree.tag_configure("even", background=C_CARD)
-        self.tree.tag_configure("odd",  background=C_ROW_ALT)
+        self._mod_frame = tk.Frame(self._canvas, bg=C_BG)
+        self._win_id = self._canvas.create_window(
+            (0, 0), window=self._mod_frame, anchor="nw")
+
+        self._mod_frame.bind("<Configure>",
+            lambda e: self._canvas.configure(
+                scrollregion=self._canvas.bbox("all")))
+        self._canvas.bind("<Configure>",
+            lambda e: self._canvas.itemconfig(self._win_id, width=e.width))
+
+        def _mw(e):
+            self._canvas.yview_scroll(
+                -e.delta if _IS_MAC else -(e.delta // 120), "units")
+        self._canvas.bind("<MouseWheel>", _mw)
+        self._mod_frame.bind("<MouseWheel>", _mw)
+        self._scroll_fn = _mw
+
+    # ── Оновлення даних ───────────────────────────────────────────────────────
 
     def on_show(self):
-        for w in self._cards_row.winfo_children():
-            w.destroy()
+        # Активуємо глобальний скрол на весь час поки вкладка відкрита
+        if self._scroll_fn:
+            self.bind_all("<MouseWheel>", self._scroll_fn)
 
         dp = self.app.db_path.get()
+
+        # Очищення
+        for w in self._cat_tiles.winfo_children():
+            w.destroy()
+        for w in self._mod_frame.winfo_children():
+            w.destroy()
+
         if not os.path.exists(dp):
-            tk.Label(self._cards_row, text="База даних не знайдена",
+            tk.Label(self._cat_tiles, text="База даних не знайдена",
                      bg=C_BG, fg=C_DANGER, font=FONT).pack(pady=10)
             return
-
-        try:
-            stats = db.get_db_stats(dp)
-        except Exception:
-            tk.Label(self._cards_row, text="БД не ініціалізована",
-                     bg=C_BG, fg=C_DANGER, font=FONT).pack(pady=10)
-            return
-
-        try:
-            conn = sqlite3.connect(dp)
-            mods_with_q = conn.execute(
-                "SELECT COUNT(DISTINCT m.id) FROM modules m "
-                "JOIN sections s ON s.module_id=m.id "
-                "JOIN questions q ON q.section_id=s.id"
-            ).fetchone()[0]
-            conn.close()
-        except Exception:
-            mods_with_q = 0
-
-        for icon, value, label, color in [
-            ("📚", stats["questions"],     "Питань",                C_ACCENT),
-            ("📂", mods_with_q,            "Модулів\n(з питаннями)", C_SUCCESS),
-            ("📋", stats["modules"],       "Модулів\n(у нормах)",   C_SIDEBAR),
-            ("🗂",  stats["sections"],     "Розділів",              C_SIDEBAR),
-            ("🔢",  stats["quotas"],       "Активних норм",         C_ACCENT),
-        ]:
-            c = tk.Frame(self._cards_row, bg=C_CARD,
-                         relief="flat", bd=0,
-                         highlightthickness=1,
-                         highlightbackground=C_BORDER)
-            c.pack(side="left", fill="x", expand=True, padx=(0, 8))
-            tk.Label(c, text=icon, bg=C_CARD,
-                     font=("Helvetica", 22)).pack(pady=(12, 2))
-            tk.Label(c, text=str(value), bg=C_CARD, fg=color,
-                     font=("Helvetica", 20, "bold")).pack()
-            tk.Label(c, text=label, bg=C_CARD, fg=C_MUTED,
-                     font=("Helvetica", 10), justify="center").pack(pady=(0, 12))
-
-        for item in self.tree.get_children():
-            self.tree.delete(item)
 
         try:
             conn = sqlite3.connect(dp)
             conn.row_factory = sqlite3.Row
-            rows = conn.execute("""
-                SELECT m.code AS mc, m.name AS mn,
-                    SUM(CASE WHEN cat.code='B1.1' THEN 1 ELSE 0 END) AS b11,
-                    SUM(CASE WHEN cat.code='B1.3' THEN 1 ELSE 0 END) AS b13,
-                    SUM(CASE WHEN cat.code='B2'   THEN 1 ELSE 0 END) AS b2,
-                    COUNT(*) AS total
-                FROM questions q
-                JOIN sections  s   ON s.id   = q.section_id
-                JOIN modules   m   ON m.id   = s.module_id
-                JOIN categories cat ON cat.id = q.category_id
-                GROUP BY m.id
+
+            # ── Дані для плиток категорій ─────────────────────────────────
+            cat_data = {}
+            for cat_code in ("TB1.1", "TB1.3", "TB2"):
+                row = conn.execute("""
+                    SELECT
+                        COALESCE(SUM(qt.count), 0) AS quota_total,
+                        COALESCE(SUM(
+                            MIN(qt.count,
+                                (SELECT COUNT(*) FROM questions q2
+                                 WHERE q2.section_id = s.id AND q2.category_id = c.id))
+                        ), 0) AS q_available
+                    FROM quotas qt
+                    JOIN sections s  ON s.id = qt.section_id
+                    JOIN categories c ON c.id = qt.category_id AND c.code = ?
+                    WHERE qt.count > 0
+                """, (cat_code,)).fetchone()
+                quota = row["quota_total"] or 0
+                avail = row["q_available"] or 0
+                pct   = int(avail / quota * 100) if quota > 0 else 0
+                cat_data[cat_code] = {"quota": quota, "avail": avail, "pct": pct}
+
+            # ── Дані для карток модулів ───────────────────────────────────
+            mod_rows = conn.execute("""
+                SELECT m.id, m.code, m.name,
+                    (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
+                     JOIN categories c2 ON q2.category_id=c2.id
+                     WHERE s2.module_id=m.id AND c2.code='TB1.1') AS b11,
+                    (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
+                     JOIN categories c2 ON q2.category_id=c2.id
+                     WHERE s2.module_id=m.id AND c2.code='TB1.3') AS b13,
+                    (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
+                     JOIN categories c2 ON q2.category_id=c2.id
+                     WHERE s2.module_id=m.id AND c2.code='TB2') AS b2,
+                    (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
+                     WHERE s2.module_id=m.id) AS total,
+                    (SELECT COALESCE(SUM(qt2.count),0)
+                     FROM quotas qt2 JOIN sections s2 ON s2.id=qt2.section_id
+                     WHERE s2.module_id=m.id) AS quota_sum
+                FROM modules m
                 ORDER BY CAST(m.code AS INTEGER)
             """).fetchall()
             conn.close()
+        except Exception as e:
+            tk.Label(self._cat_tiles, text=f"Помилка читання БД: {e}",
+                     bg=C_BG, fg=C_DANGER, font=FONT_SM).pack(pady=10)
+            return
 
-            for i, r in enumerate(rows):
-                tag = "even" if i % 2 == 0 else "odd"
-                self.tree.insert("", "end", tags=(tag,), values=(
-                    f"M{r['mc']}   {r['mn']}",
-                    r["b11"] or "—",
-                    r["b13"] or "—",
-                    r["b2"]  or "—",
-                    r["total"],
-                ))
-        except Exception:
-            pass
+        # ── Відмалювати плитки категорій ─────────────────────────────────────
+        self._draw_cat_tiles(cat_data)
+
+        # ── Відмалювати картки модулів ────────────────────────────────────────
+        self._draw_module_cards(mod_rows)
+
+    def _ready_color(self, pct: int) -> tuple[str, str]:
+        """Повертає (колір, текст) для відсотка готовності."""
+        for threshold, color, label in self._READY_COLORS:
+            if pct >= threshold:
+                return color, label
+        return C_DANGER, "Не готовий"
+
+    def _draw_cat_tiles(self, cat_data: dict):
+        """Три великі плитки TB1.1 / TB1.3 / TB2."""
+        CAT_ICONS = {"TB1.1": "⚙️", "TB1.3": "🔧", "TB2": "📡"}
+        CAT_NAMES = {
+            "TB1.1": "Авіамеханік (ГТД)",
+            "TB1.3": "Авіамеханік (ПД)",
+            "TB2":   "Авіоніка",
+        }
+
+        for cat_code, data in cat_data.items():
+            pct   = data["pct"]
+            color, status = self._ready_color(pct)
+            avail = data["avail"]
+            quota = data["quota"]
+
+            tile = tk.Frame(self._cat_tiles, bg=C_CARD,
+                            highlightthickness=2,
+                            highlightbackground=color)
+            tile.pack(side="left", fill="x", expand=True, padx=(0, 10))
+
+            # Верхній рядок: іконка + код + статус
+            top = tk.Frame(tile, bg=C_CARD)
+            top.pack(fill="x", padx=16, pady=(14, 4))
+
+            tk.Label(top, text=CAT_ICONS[cat_code], bg=C_CARD,
+                     font=("Helvetica", 22)).pack(side="left")
+            tk.Label(top, text=cat_code, bg=C_CARD, fg=C_SIDEBAR,
+                     font=("Helvetica", 18, "bold")).pack(side="left", padx=8)
+            status_lbl = tk.Label(top, text=status, bg=color, fg="white",
+                                   font=("Helvetica", 10, "bold"),
+                                   padx=8, pady=3)
+            status_lbl.pack(side="right")
+
+            # Назва
+            tk.Label(tile, text=CAT_NAMES[cat_code],
+                     bg=C_CARD, fg=C_MUTED,
+                     font=("Helvetica", 10)).pack(anchor="w", padx=16)
+
+            # Прогрес-бар
+            pb_bg = tk.Frame(tile, bg=C_BORDER, height=8)
+            pb_bg.pack(fill="x", padx=16, pady=(10, 4))
+            pb_bg.update_idletasks()
+
+            def _draw_bar(frame=pb_bg, p=pct, c=color):
+                w = frame.winfo_width()
+                fill_w = max(4, int(w * p / 100))
+                tk.Frame(frame, bg=c, height=8, width=fill_w).place(x=0, y=0)
+            pb_bg.bind("<Configure>", lambda e, f=pb_bg, p=pct, c=color:
+                       tk.Frame(f, bg=c, height=8,
+                                width=max(4, int(e.width * p / 100))).place(x=0, y=0))
+
+            # Підпис
+            tk.Label(tile, text=f"{avail} з {quota} питань  ({pct}%)",
+                     bg=C_CARD, fg=color,
+                     font=("Helvetica", 11, "bold")).pack(
+                anchor="w", padx=16, pady=(0, 14))
+
+    def _draw_module_cards(self, mod_rows):
+        """Картки-прогресбари по кожному модулю."""
+        # Заголовок секції
+        tk.Label(self._mod_frame,
+                 text="Завантаження по модулях",
+                 bg=C_BG, fg=C_SIDEBAR,
+                 font=("Helvetica", 13, "bold")).pack(
+            anchor="w", pady=(0, 8))
+
+        for r in mod_rows:
+            total = r["total"] or 0
+            quota = r["quota_sum"] or 0
+            pct   = int(total / quota * 100) if quota > 0 else 0
+            color, _ = self._ready_color(pct)
+
+            b11 = r["b11"] or 0
+            b13 = r["b13"] or 0
+            b2  = r["b2"]  or 0
+
+            # Картка
+            c_outer = tk.Frame(self._mod_frame, bg=C_BORDER, pady=1, padx=1)
+            c_outer.pack(fill="x", pady=(0, 6))
+            c_inner = tk.Frame(c_outer, bg=C_CARD, padx=14, pady=10)
+            c_inner.pack(fill="both")
+
+            # Рядок 1: код + назва + кількість питань
+            row1 = tk.Frame(c_inner, bg=C_CARD)
+            row1.pack(fill="x")
+
+            tk.Label(row1, text=f"M{r['code']}", bg=C_CARD, fg=C_SIDEBAR,
+                     font=("Helvetica", 11, "bold"), width=5,
+                     anchor="w").pack(side="left")
+            tk.Label(row1, text=r["name"], bg=C_CARD, fg=C_TEXT,
+                     font=FONT_SM, anchor="w").pack(
+                side="left", fill="x", expand=True)
+
+            # Бейджики категорій (лише де є питання)
+            badge_row = tk.Frame(row1, bg=C_CARD)
+            badge_row.pack(side="right")
+            for cat_code, cnt in [("TB1.1", b11), ("TB1.3", b13), ("TB2", b2)]:
+                if cnt > 0:
+                    tk.Label(badge_row, text=f"{cat_code}: {cnt}",
+                             bg=C_ACCENT, fg="white",
+                             font=("Helvetica", 9, "bold"),
+                             padx=6, pady=2).pack(side="left", padx=2)
+
+            # Прогрес-бар
+            pb_bg = tk.Frame(c_inner, bg=C_BORDER, height=6)
+            pb_bg.pack(fill="x", pady=(8, 4))
+            pb_bg.bind("<Configure>",
+                       lambda e, c=color, p=pct:
+                       tk.Frame(e.widget, bg=c, height=6,
+                                width=max(0, int(e.width * p / 100))).place(x=0, y=0))
+
+            # Підпис прогресу
+            row2 = tk.Frame(c_inner, bg=C_CARD)
+            row2.pack(fill="x")
+            if quota > 0:
+                tk.Label(row2,
+                         text=f"{total} питань завантажено  /  норма {quota}  ({pct}%)",
+                         bg=C_CARD, fg=color,
+                         font=("Helvetica", 10)).pack(side="left")
+            else:
+                tk.Label(row2,
+                         text=f"{total} питань  (норма не задана)",
+                         bg=C_CARD, fg=C_MUTED,
+                         font=("Helvetica", 10)).pack(side="left")
+
+            # Скрол для карток забезпечується через bind_all у on_show
 
 
-# ─── Вкладка: Налаштування ───────────────────────────────────────────────────
+# ─── Вкладка: Інструкція користувача ─────────────────────────────────────────
 
 class SettingsFrame(tk.Frame):
+    """
+    Вкладка «Інструкція користувача» — красиво відформатований посібник
+    по роботі з програмою, розбитий на кольорові блоки з іконками.
+    """
+
+    _SECTIONS = [
+        {
+            "icon": "📦",
+            "title": "Крок 1 — Підготовка бази даних",
+            "color": "#EBF5FB",
+            "border": "#2E86AB",
+            "steps": [
+                ("1.1", "Перейдіть у вкладку «Модулі»"),
+                ("1.2", "У блоці «Таблиця норм» оберіть файл «Таблиця по категоріям.docx» "
+                        "та натисніть «Завантажити норми». Це потрібно зробити лише один раз — "
+                        "норми зберігаються у базі даних і залишаються після перезапуску."),
+                ("1.3", "Для кожного модуля, що використовується у вашій категорії, "
+                        "оберіть модуль зі списку (клік на рядок), потім у блоці "
+                        "«Завантаження модуля» вкажіть файл .docx та натисніть "
+                        "«Імпортувати модуль»."),
+                ("1.4", "Зелений індикатор ● біля модуля означає, що питання успішно "
+                        "завантажено до бази даних."),
+            ],
+        },
+        {
+            "icon": "✈",
+            "title": "Крок 2 — Генерація тестів",
+            "color": "#EAFAF1",
+            "border": "#27AE60",
+            "steps": [
+                ("2.1", "Перейдіть у вкладку «Генерація» та оберіть категорію здобувача: "
+                        "TB1.1 (ГТД), TB1.3 (ПД) або TB2 (авіоніка)."),
+                ("2.2", "На кроці «Норми» відображаються лише ті модулі та розділи, "
+                        "що передбачені для обраної категорії. Для кожного розділу "
+                        "стовпець «Норма» показує рекомендовану кількість питань "
+                        "із таблиці, «В БД» — скільки питань доступно, "
+                        "«Задати» — поле для введення потрібної кількості."),
+                ("2.3", "На кроці «Варіанти» за допомогою лічильника вкажіть скільки "
+                        "варіантів тесту потрібно згенерувати."),
+                ("2.4", "На кроці «Папка» оберіть директорію для збереження файлів."),
+                ("2.5", "Натисніть «Генерувати» — програма автоматично створить файли "
+                        "тестів та листів відповідей для кожного варіанту."),
+            ],
+        },
+        {
+            "icon": "📄",
+            "title": "Вихідні файли",
+            "color": "#FEF9E7",
+            "border": "#D4AC0D",
+            "steps": [
+                ("●", "Файл здобувача — тестові завдання з бланком відповідей "
+                        "(Варіант №1, №2, …)."),
+                ("●", "Файл викладача — лист відповідей: лише номер питання та правильна відповідь."),
+                ("●", "Всі файли зберігаються у вказану вами папку у форматі .docx."),
+            ],
+        },
+        {
+            "icon": "📊",
+            "title": "Статистика",
+            "color": "#F4ECF7",
+            "border": "#7D3C98",
+            "steps": [
+                ("●", "Вкладка «Статистика» показує кількість завантажених питань "
+                        "по кожному модулю та категорії."),
+                ("●", "Використовуйте її для перевірки повноти завантаження модулів "
+                        "перед генерацією тестів."),
+            ],
+        },
+        {
+            "icon": "💡",
+            "title": "Корисні поради",
+            "color": "#FDFEFE",
+            "border": "#BDC3C7",
+            "steps": [
+                ("●", "База даних зберігається у файлі questions.db у папці data/. "
+                        "При перенесенні програми на інший комп'ютер скопіюйте разом "
+                        "із нею файли data/questions.db та data/Таблиця по категоріям.docx."),
+                ("●", "Якщо потрібно оновити питання модуля — просто завантажте новий "
+                        "файл для того самого модуля. Старі питання замінюються новими."),
+                ("●", "Категорії TB1.1 і TB1.3 використовують різні набори модулів — "
+                        "на кроці «Норми» показуються тільки ті, що відповідають "
+                        "обраній категорії."),
+            ],
+        },
+    ]
+
     def __init__(self, parent, app):
         super().__init__(parent, bg=C_BG)
         self.app = app
         self._build()
 
     def _build(self):
-        tk.Label(self, text="Налаштування",
-                 bg=C_BG, fg=C_SIDEBAR, font=FONT_TITLE).pack(
-            anchor="w", padx=24, pady=(20, 12))
+        # Заголовок
+        hdr = tk.Frame(self, bg=C_BG)
+        hdr.pack(fill="x", padx=24, pady=(20, 4))
+        tk.Label(hdr, text="Інструкція користувача",
+                 bg=C_BG, fg=C_SIDEBAR, font=FONT_TITLE).pack(side="left")
 
-        wrap = tk.Frame(self, bg=C_BG)
-        wrap.pack(fill="x", padx=24)
+        tk.Label(self,
+                 text="Система автоматизованого формування тестів EASA Part 147  ·  "
+                      "Підтримувані категорії: TB1.1  TB1.3  TB2",
+                 bg=C_BG, fg=C_MUTED, font=("Helvetica", 11)).pack(
+            anchor="w", padx=24, pady=(0, 12))
 
-        outer1, inner1 = card(wrap, "База даних (SQLite)")
-        outer1.pack(fill="x", pady=(0, 12))
+        # Прокручуваний контент
+        outer = tk.Frame(self, bg=C_BG)
+        outer.pack(fill="both", expand=True, padx=24, pady=(0, 16))
+        outer.rowconfigure(0, weight=1)
+        outer.columnconfigure(0, weight=1)
 
-        db_row = tk.Frame(inner1, bg=C_CARD)
-        db_row.pack(fill="x", padx=16, pady=(4, 0))
-        tk.Entry(db_row, textvariable=self.app.db_path, font=FONT_SM,
-                 bg="#F7FAFC", relief="flat", highlightthickness=1,
-                 highlightbackground=C_BORDER).pack(
-            side="left", fill="x", expand=True)
-        ghost_btn(db_row, "📂", self._browse_db).pack(side="left", padx=(6, 0))
+        canvas = tk.Canvas(outer, bg=C_BG, highlightthickness=0)
+        vsb = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=vsb.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        vsb.grid(row=0, column=1, sticky="ns")
 
-        btn_row = tk.Frame(inner1, bg=C_CARD)
-        btn_row.pack(fill="x", padx=16, pady=(8, 14))
+        content = tk.Frame(canvas, bg=C_BG)
+        win_id = canvas.create_window((0, 0), window=content, anchor="nw")
 
-        self._db_status = tk.Label(btn_row, text="", bg=C_CARD,
-                                    fg=C_MUTED, font=FONT_SM)
+        def _on_conf(e):
+            canvas.configure(scrollregion=canvas.bbox("all"))
+        def _on_canvas_conf(e):
+            canvas.itemconfig(win_id, width=e.width)
 
-        def init_and_report():
-            try:
-                db.init_db(self.app.db_path.get())
-                self._db_status.configure(text="✓ БД ініціалізована", fg=C_SUCCESS)
-            except Exception as e:
-                self._db_status.configure(text=f"✗ {e}", fg=C_DANGER)
+        def _scroll(e):
+            canvas.yview_scroll(
+                -e.delta if _IS_MAC else -(e.delta // 120), "units")
 
-        accent_btn(btn_row, "Ініціалізувати БД",
-                   init_and_report).pack(side="left")
-        self._db_status.pack(side="left", padx=12)
+        content.bind("<Configure>", _on_conf)
+        canvas.bind("<Configure>", _on_canvas_conf)
+        canvas.bind("<MouseWheel>", _scroll)
+        content.bind("<MouseWheel>", _scroll)
+        # Зберігаємо функцію скролу для передачі в _build_section
+        self._instr_scroll = _scroll
+        self._settings_canvas = canvas
 
-        outer2, inner2 = card(wrap, "Папка для збереження тестів")
-        outer2.pack(fill="x", pady=(0, 12))
+        # Блоки інструкції
+        for sec in self._SECTIONS:
+            self._build_section(content, sec)
 
-        dir_row = tk.Frame(inner2, bg=C_CARD)
-        dir_row.pack(fill="x", padx=16, pady=(4, 14))
-        tk.Entry(dir_row, textvariable=self.app.output_dir, font=FONT_SM,
-                 bg="#F7FAFC", relief="flat", highlightthickness=1,
-                 highlightbackground=C_BORDER).pack(
-            side="left", fill="x", expand=True)
-        ghost_btn(dir_row, "📂",
-                  lambda: self._browse_dir(self.app.output_dir)
-                  ).pack(side="left", padx=(6, 0))
+        # Нижній колонтитул
+        tk.Label(content,
+                 text="Розроблено: Деревецька Поліна Михайлівна  ·  "
+                      "Криворізький фаховий коледж КАІ  ·  2026",
+                 bg=C_BG, fg=C_MUTED,
+                 font=("Helvetica", 10, "italic")).pack(
+            anchor="center", pady=(16, 8))
 
-        outer3, inner3 = card(wrap, "Про програму")
-        outer3.pack(fill="x")
-        tk.Label(
-            inner3,
-            text=(
-                "Система автоматизованого формування тестових завдань\n"
-                "для навчального центру технічного обслуговування повітряних суден\n"
-                "відповідно до вимог EASA Part 147.\n\n"
-                "Підтримувані категорії:  B1.1  ·  B1.3  ·  B2\n"
-                "Формати виводу:  DOCX"
-            ),
-            bg=C_CARD, fg=C_TEXT, font=FONT_SM, justify="left",
-        ).pack(anchor="w", padx=16, pady=(4, 16))
+    def on_show(self):
+        if hasattr(self, "_instr_scroll"):
+            self.bind_all("<MouseWheel>", self._instr_scroll)
 
-    def _browse_db(self):
-        f = filedialog.askopenfilename(
-            title="Оберіть файл бази даних",
-            filetypes=[("SQLite DB", "*.db"), ("Всі файли", "*.*")],
-        )
-        if f:
-            self.app.db_path.set(f)
+    def _build_section(self, parent, sec: dict):
+        """Малює один кольоровий блок інструкції."""
+        bg  = sec["color"]
+        brd = sec["border"]
+        scr = getattr(self, "_instr_scroll", None)
 
-    def _browse_dir(self, var):
-        d = filedialog.askdirectory(title="Оберіть папку")
-        if d:
-            var.set(d)
+        def _bind_scroll(w):
+            if scr:
+                w.bind("<MouseWheel>", scr)
+
+        # Зовнішній фрейм з кольоровою лівою смугою
+        outer = tk.Frame(parent, bg=brd, padx=3, pady=0)
+        outer.pack(fill="x", pady=(0, 10))
+        _bind_scroll(outer)
+
+        inner = tk.Frame(outer, bg=bg)
+        inner.pack(fill="both", expand=True)
+        _bind_scroll(inner)
+
+        # Заголовок блоку
+        hdr = tk.Frame(inner, bg=bg)
+        hdr.pack(fill="x", padx=14, pady=(12, 6))
+        _bind_scroll(hdr)
+
+        icon_lbl = tk.Label(hdr, text=sec["icon"], bg=bg,
+                             font=("Helvetica", 20))
+        icon_lbl.pack(side="left", padx=(0, 8))
+        _bind_scroll(icon_lbl)
+
+        title_lbl = tk.Label(hdr, text=sec["title"], bg=bg, fg=C_SIDEBAR,
+                              font=("Helvetica", 13, "bold"))
+        title_lbl.pack(side="left")
+        _bind_scroll(title_lbl)
+
+        # Кроки
+        for num, text in sec["steps"]:
+            row = tk.Frame(inner, bg=bg)
+            row.pack(fill="x", padx=14, pady=(0, 6))
+            _bind_scroll(row)
+
+            num_lbl = tk.Label(row, text=num, bg=bg, fg=brd,
+                               font=("Helvetica", 11, "bold"),
+                               width=4, anchor="nw")
+            num_lbl.pack(side="left", pady=2)
+            _bind_scroll(num_lbl)
+
+            txt_lbl = tk.Label(row, text=text, bg=bg, fg=C_TEXT,
+                               font=("Helvetica", 11),
+                               justify="left", wraplength=700,
+                               anchor="nw")
+            txt_lbl.pack(side="left", fill="x", expand=True, pady=2)
+            _bind_scroll(txt_lbl)
+
+        spacer = tk.Frame(inner, bg=bg, height=6)
+        spacer.pack()
+        _bind_scroll(spacer)
 
 
 # ─── Запуск ───────────────────────────────────────────────────────────────────

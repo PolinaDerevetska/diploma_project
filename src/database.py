@@ -179,6 +179,50 @@ def get_sections_by_category(category_id: int, db_path: str = DB_PATH) -> list[s
         ).fetchall()
 
 
+def get_sections_for_category_with_quotas(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
+    """
+    Повертає всі розділи, передбачені для категорії (quota > 0),
+    разом із кількістю доступних питань у БД (може бути 0 якщо модуль ще не імпортований).
+    Використовується у wizard генерації — показує лише релевантні модулі/розділи.
+    """
+    with get_connection(db_path) as conn:
+        return conn.execute(
+            """SELECT s.id, s.code AS section_code, s.name AS section_name,
+                      m.id AS module_id, m.code AS module_code, m.name AS module_name,
+                      qt.count AS quota,
+                      COUNT(q.id) AS available
+               FROM quotas qt
+               JOIN sections s  ON s.id = qt.section_id
+               JOIN modules  m  ON m.id = s.module_id
+               LEFT JOIN questions q ON q.section_id = s.id AND q.category_id = ?
+               WHERE qt.category_id = ? AND qt.count > 0
+               GROUP BY s.id
+               ORDER BY CAST(m.code AS INTEGER), s.id""",
+            (category_id, category_id),
+        ).fetchall()
+
+
+def get_modules_for_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
+    """
+    Повертає модулі, що мають хоча б один розділ із quota > 0 для категорії.
+    Разом із загальною кількістю питань у БД та кількістю завантажених розділів.
+    """
+    with get_connection(db_path) as conn:
+        return conn.execute(
+            """SELECT m.id, m.code, m.name,
+                      COUNT(DISTINCT s.id)  AS total_sections,
+                      COUNT(DISTINCT q.id)  AS total_questions
+               FROM quotas qt
+               JOIN sections s ON s.id = qt.section_id
+               JOIN modules  m ON m.id = s.module_id
+               LEFT JOIN questions q ON q.section_id = s.id AND q.category_id = ?
+               WHERE qt.category_id = ? AND qt.count > 0
+               GROUP BY m.id
+               ORDER BY CAST(m.code AS INTEGER)""",
+            (category_id, category_id),
+        ).fetchall()
+
+
 # ─── Питання ─────────────────────────────────────────────────────────────────
 
 def insert_question(
