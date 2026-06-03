@@ -391,7 +391,7 @@ class GenerateFrame(tk.Frame):
         self._step = 0
 
         # Змінні вибору
-        self._cat_var       = tk.StringVar(value="TB1.1")
+        self._cat_var       = tk.StringVar(value="B1.1")
         self._variants_var  = tk.IntVar(value=1)
         self._quota_vars    = {}   # section_id -> tk.IntVar
         self._avail         = {}   # section_id -> int
@@ -485,16 +485,16 @@ class GenerateFrame(tk.Frame):
                  font=("Helvetica", 48)).pack(pady=(0, 8))
         tk.Label(wrap, text="Оберіть категорію здобувача",
                  bg=C_BG, fg=C_SIDEBAR, font=("Helvetica", 16, "bold")).pack()
-        tk.Label(wrap, text="EASA Part 147 — TB1.1 / TB1.3 / TB2",
+        tk.Label(wrap, text="EASA Part 147 — B1.1 / B1.3 / B2",
                  bg=C_BG, fg=C_MUTED, font=("Helvetica", 11)).pack(pady=(2, 24))
 
         cards_row = tk.Frame(wrap, bg=C_BG)
         cards_row.pack()
 
         cat_info = {
-            "TB1.1": ("Авіаційний механік\nгазотурбінний літак", "⚙️"),
-            "TB1.3": ("Авіаційний механік\nгазотурбінний вертольот", "🔧"),
-            "TB2":   ("Авіаційний механік\nавіоніка", "📡"),
+            "B1.1": ("Авіаційний механік\nгазотурбінний літак", "⚙️"),
+            "B1.3": ("Авіаційний механік\nгазотурбінний вертольот", "🔧"),
+            "B2":   ("Авіаційний механік\nавіоніка", "📡"),
         }
 
         for cat, (desc, icon) in cat_info.items():
@@ -935,8 +935,12 @@ class GenerateFrame(tk.Frame):
             ))
             try:
                 variant = gen.generate_test(cat_code, label, db_path=dp)
-                ex_docx.export_student_docx(variant, out_dir)
-                ex_docx.export_answer_key_docx(variant, out_dir)
+                used_ids = {q.id for q in variant.questions}
+                desc_qs = gen.generate_descriptive_questions(
+                    cat_code, exclude_ids=used_ids, db_path=dp
+                )
+                ex_docx.export_student_docx(variant, out_dir, descriptive=desc_qs)
+                ex_docx.export_answer_key_docx(variant, out_dir, descriptive=desc_qs)
                 ok.append(label)
             except Exception as e:
                 errors.append(f"{label}: {e}")
@@ -1442,7 +1446,7 @@ class StatsFrame(tk.Frame):
 
             # ── Дані для плиток категорій ─────────────────────────────────
             cat_data = {}
-            for cat_code in ("TB1.1", "TB1.3", "TB2"):
+            for cat_code in ("B1.1", "B1.3", "B2"):
                 row = conn.execute("""
                     SELECT
                         COALESCE(SUM(qt.count), 0) AS quota_total,
@@ -1466,13 +1470,13 @@ class StatsFrame(tk.Frame):
                 SELECT m.id, m.code, m.name,
                     (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
                      JOIN categories c2 ON q2.category_id=c2.id
-                     WHERE s2.module_id=m.id AND c2.code='TB1.1') AS b11,
+                     WHERE s2.module_id=m.id AND c2.code='B1.1') AS b11,
                     (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
                      JOIN categories c2 ON q2.category_id=c2.id
-                     WHERE s2.module_id=m.id AND c2.code='TB1.3') AS b13,
+                     WHERE s2.module_id=m.id AND c2.code='B1.3') AS b13,
                     (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
                      JOIN categories c2 ON q2.category_id=c2.id
-                     WHERE s2.module_id=m.id AND c2.code='TB2') AS b2,
+                     WHERE s2.module_id=m.id AND c2.code='B2') AS b2,
                     (SELECT COUNT(*) FROM questions q2 JOIN sections s2 ON q2.section_id=s2.id
                      WHERE s2.module_id=m.id) AS total,
                     (SELECT COALESCE(SUM(qt2.count),0)
@@ -1501,12 +1505,12 @@ class StatsFrame(tk.Frame):
         return C_DANGER, "Не готовий"
 
     def _draw_cat_tiles(self, cat_data: dict):
-        """Три великі плитки TB1.1 / TB1.3 / TB2."""
-        CAT_ICONS = {"TB1.1": "⚙️", "TB1.3": "🔧", "TB2": "📡"}
+        """Три великі плитки B1.1 / B1.3 / B2."""
+        CAT_ICONS = {"B1.1": "⚙️", "B1.3": "🔧", "B2": "📡"}
         CAT_NAMES = {
-            "TB1.1": "Авіамеханік (ГТД)",
-            "TB1.3": "Авіамеханік (ПД)",
-            "TB2":   "Авіоніка",
+            "B1.1": "Авіамеханік (ГТД)",
+            "B1.3": "Авіамеханік (ПД)",
+            "B2":   "Авіоніка",
         }
 
         for cat_code, data in cat_data.items():
@@ -1596,7 +1600,7 @@ class StatsFrame(tk.Frame):
             # Бейджики категорій (лише де є питання)
             badge_row = tk.Frame(row1, bg=C_CARD)
             badge_row.pack(side="right")
-            for cat_code, cnt in [("TB1.1", b11), ("TB1.3", b13), ("TB2", b2)]:
+            for cat_code, cnt in [("B1.1", b11), ("B1.3", b13), ("B2", b2)]:
                 if cnt > 0:
                     tk.Label(badge_row, text=f"{cat_code}: {cnt}",
                              bg=C_ACCENT, fg="white",
@@ -1662,7 +1666,7 @@ class SettingsFrame(tk.Frame):
             "border": "#27AE60",
             "steps": [
                 ("2.1", "Перейдіть у вкладку «Генерація» та оберіть категорію здобувача: "
-                        "TB1.1 (ГТД), TB1.3 (ПД) або TB2 (авіоніка)."),
+                        "B1.1 (ГТД), B1.3 (ПД) або B2 (авіоніка)."),
                 ("2.2", "На кроці «Норми» відображаються лише ті модулі та розділи, "
                         "що передбачені для обраної категорії. Для кожного розділу "
                         "стовпець «Норма» показує рекомендовану кількість питань "
@@ -1710,7 +1714,7 @@ class SettingsFrame(tk.Frame):
                         "із нею файли data/questions.db та data/Таблиця по категоріям.docx."),
                 ("●", "Якщо потрібно оновити питання модуля — просто завантажте новий "
                         "файл для того самого модуля. Старі питання замінюються новими."),
-                ("●", "Категорії TB1.1 і TB1.3 використовують різні набори модулів — "
+                ("●", "Категорії B1.1 і B1.3 використовують різні набори модулів — "
                         "на кроці «Норми» показуються тільки ті, що відповідають "
                         "обраній категорії."),
             ],
@@ -1731,7 +1735,7 @@ class SettingsFrame(tk.Frame):
 
         tk.Label(self,
                  text="Система автоматизованого формування тестів EASA Part 147  ·  "
-                      "Підтримувані категорії: TB1.1  TB1.3  TB2",
+                      "Підтримувані категорії: B1.1  B1.3  B2",
                  bg=C_BG, fg=C_MUTED, font=("Helvetica", 11)).pack(
             anchor="w", padx=24, pady=(0, 12))
 

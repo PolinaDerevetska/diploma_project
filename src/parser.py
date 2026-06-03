@@ -221,6 +221,12 @@ def _parse_question_row(cells: list[str]) -> dict | None:
         return None
 
     # Розбиваємо текст питання на саме питання та варіанти відповідей
+    # Спочатку нормалізуємо: якщо варіант прилип до питання без \n (напр. "питання:А) текст")
+    _OPT_INLINE = re.compile(
+        r'(?<=[^(\n])([ \t]*)([АВСABCавсБб]\s*[)\.][ \t])',
+        re.UNICODE
+    )
+    raw_text = _OPT_INLINE.sub(r'\n\2', raw_text)
     lines = [ln.strip() for ln in raw_text.split("\n") if ln.strip()]
     question_text = ""
     options: dict[str, str] = {}
@@ -324,7 +330,7 @@ def parse_module_file(
 
     if not category_order:
         # Якщо заголовків нема — спробуємо взяти стандартні три
-        category_order = ["TB1.1", "TB1.3", "TB2"]
+        category_order = ["B1.1", "B1.3", "B2"]
         log.warning("Заголовки категорій не знайдені, використовую стандартні: %s", category_order)
 
     tables = doc.tables
@@ -344,7 +350,7 @@ def parse_module_file(
 
         # TB1 (без підкатегорії) — питання застосовуються до обох підкатегорій
         if cat_code in ("TB1", "B1"):
-            target_cats = ["TB1.1", "TB1.3"]
+            target_cats = ["B1.1", "B1.3"]
         else:
             target_cats = [cat_code]
 

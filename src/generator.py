@@ -8,9 +8,62 @@ generator.py — алгоритм формування унікального в
 """
 
 import random
+import re
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
+
+_FORMULA_ONLY = re.compile(r'^\s*[АаAaБбВвBbСсCc]\s*\)?\s*$', re.UNICODE)
+_IMG_MARKER = re.compile(r'\[IMG_\d+\]')
+
+def _is_real_option(text: str) -> bool:
+    """Повертає True, якщо варіант відповіді містить справжній текст або зображення."""
+    t = (text or '').strip()
+    if not t:
+        return False
+    if _FORMULA_ONLY.match(t):
+        return False
+    # Якщо після видалення IMG-маркерів залишились лише коми/пробіли,
+    # але маркери є — значить є зображення → питання допустиме
+    if _IMG_MARKER.search(t):
+        return True
+    # Звичайний текст без маркерів — перевіряємо чи не просто роздільники
+    t_clean = _IMG_MARKER.sub('', t).strip().strip(',').strip(';').strip('.').strip('?').strip()
+    return bool(t_clean)
+
+
+def _is_usable_question(row: dict) -> bool:
+    """Повертає True, якщо питання придатне для включення в тест.
+
+    Критерії:
+      1. Хоча б один варіант містить справжній текст/зображення, АБО
+         текст питання містить IMG-маркер (варіанти показані на малюнку).
+      2. Варіант правильної відповіді не порожній (щоб уникнути тесту
+         де правильна відповідь відображається порожнім рядком).
+    """
+    opt_a = row["option_a"] or ''
+    opt_b = row["option_b"] or ''
+    opt_c = row["option_c"] or ''
+
+    # Критерій 1: є хоч якийсь зміст
+    has_content = (
+        _is_real_option(opt_a)
+        or _is_real_option(opt_b)
+        or _is_real_option(opt_c)
+        or _IMG_MARKER.search(row["question_text"] or '')  # варіанти — на малюнку в питанні
+    )
+    if not has_content:
+        return False
+
+    # Критерій 2: правильна відповідь не порожня
+    ans = (row["correct_answer"] or 'A').upper()
+    correct_text = {'A': opt_a, 'B': opt_b, 'C': opt_c}.get(ans, '')
+    # Приймаємо якщо текст є АБО є IMG-маркер у тексті питання
+    # (для питань де малюнок показує всі варіанти)
+    if not _is_real_option(correct_text) and not _IMG_MARKER.search(row["question_text"] or ''):
+        return False
+
+    return True
 
 import database as db
 
@@ -72,7 +125,7 @@ def generate_test(
     Генерує унікальний варіант тесту для заданої категорії.
 
     Args:
-        category_code: код категорії ("TB1.1", "TB1.3" або "TB2")
+        category_code: код категорії ("B1.1", "B1.3" або "B2")
         student_name:  ПІБ здобувача (для титульного аркуша)
         seed:          фіксований seed для відтворюваності (None = справжній random)
         db_path:       шлях до БД
@@ -114,7 +167,7 @@ def generate_test(
 
         # Отримуємо всі доступні питання для цього розділу та категорії
         rows = db.get_questions(section_id, cat_id, db_path)
-        available = list(rows)
+        available = [r for r in rows if _is_usable_question(r)]
 
         if len(available) < needed:
             msg = (f"Розділ {sec_code} ({cat_id=}): потрібно {needed}, "
@@ -173,6 +226,102 @@ def generate_test(
     return variant
 
 
+def generate_descriptive_questions(
+    category_code: str,
+    exclude_ids: set[int] | None = None,
+    count_per_module: int = 5,
+    db_path: str = db.DB_PATH,
+) -> list[Question]:
+    """
+    Вибирає описові питання з модулів 7, 9, 10 для бланку описових відповідей.
+
+    Питання беруться з тих самих розділів, що й звичайні тестові питання,
+    але для відображення варіанти відповідей не показуються.
+
+    Args:
+        category_code:    код категорії
+        exclude_ids:      id питань, які вже включені в тест (щоб не повторювались)
+        count_per_module: кількість питань з кожного модуля (за замовчуванням 5)
+        db_path:          шлях до БД
+
+    Returns:
+        Список Question (з тими самими полями, але використовується тільки question_text)
+    """
+    # Модулі 7, 9, 10 за кодом
+    DESCRIPTIVE_MODULE_CODES = {'7', '9', '10'}
+
+    cat_id = db.get_category_id(category_code, db_path)
+    if cat_id is None:
+        return []
+
+    exclude_ids = exclude_ids or set()
+    result: list[Question] = []
+
+    with db.get_connection(db_path) as conn:
+        conn.row_factory = __import__('sqlite3').Row
+        cur = conn.cursor()
+
+        for mod_code in sorted(DESCRIPTIVE_MODULE_CODES):
+            cur.execute(
+                """SELECT s.id, s.code, s.name, m.code AS mc, m.name AS mn
+                   FROM sections s
+                   JOIN modules m ON m.id = s.module_id
+                   WHERE m.code = ?""",
+                (mod_code,)
+            )
+            sections = cur.fetchall()
+            if not sections:
+                continue
+
+            # Збираємо всі доступні питання для цього модуля
+            pool: list[dict] = []
+            for sec in sections:
+                rows = db.get_questions(sec["id"], cat_id, db_path)
+                for r in rows:
+                    if r["id"] not in exclude_ids and _is_usable_question(r):
+                        pool.append({
+                            "row": r,
+                            "sec_code": sec["code"],
+                            "sec_name": sec["name"],
+                            "mod_code": mod_code,
+                            "mod_name": sec["mn"],
+                        })
+
+            if not pool:
+                continue
+
+            chosen = random.sample(pool, min(count_per_module, len(pool)))
+
+            for item in chosen:
+                r = item["row"]
+                img_rows = db.get_question_images(r["id"], db_path)
+                images = [
+                    QuestionImage(
+                        context=ir["context"],
+                        img_index=ir["img_index"],
+                        ext=ir["ext"],
+                        data=bytes(ir["data"]),
+                    )
+                    for ir in img_rows
+                ]
+                result.append(Question(
+                    id=r["id"],
+                    source_number=r["source_number"],
+                    question_text=r["question_text"],
+                    option_a=r["option_a"],
+                    option_b=r["option_b"],
+                    option_c=r["option_c"],
+                    correct_answer=r["correct_answer"],
+                    section_code=item["sec_code"],
+                    section_name=item["sec_name"],
+                    module_code=item["mod_code"],
+                    module_name=item["mod_name"],
+                    images=images,
+                ))
+
+    return result
+
+
 def generate_multiple_tests(
     category_code: str,
     student_names: list[str],
@@ -200,7 +349,7 @@ if __name__ == "__main__":
     # Швидка перевірка генератора
     logging.basicConfig(level=logging.INFO)
     try:
-        v = generate_test("TB1.1", "Іваненко Іван Іванович")
+        v = generate_test("B1.1", "Іваненко Іван Іванович")
         print(f"Згенеровано {v.total_questions} питань для {v.student_name}")
         print(f"Перше питання: {v.questions[0].question_text[:80]}...")
     except ValueError as e:

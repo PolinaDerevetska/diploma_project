@@ -82,6 +82,23 @@ def init_db(db_path: str = DB_PATH) -> None:
             );
         """)
     print(f"[DB] Ініціалізовано: {db_path}")
+    migrate_category_codes(db_path)
+
+
+def migrate_category_codes(db_path: str = DB_PATH) -> None:
+    """Міграція: перейменовує TB1.1→B1.1, TB1.3→B1.3, TB2→B2 (одноразово)."""
+    renames = [("TB1.1", "B1.1"), ("TB1.3", "B1.3"), ("TB2", "B2")]
+    with get_connection(db_path) as conn:
+        for old, new in renames:
+            exists_old = conn.execute(
+                "SELECT 1 FROM categories WHERE code=?", (old,)
+            ).fetchone()
+            exists_new = conn.execute(
+                "SELECT 1 FROM categories WHERE code=?", (new,)
+            ).fetchone()
+            if exists_old and not exists_new:
+                conn.execute("UPDATE categories SET code=? WHERE code=?", (new, old))
+                print(f"[DB] Міграція: {old} → {new}")
 
 
 # ─── Модулі ──────────────────────────────────────────────────────────────────

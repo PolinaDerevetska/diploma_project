@@ -4,7 +4,7 @@ quota_loader.py — завантаження норм із файлу "Табл�
 
 Структура файлу:
   - Paragraph "Модуль N - Назва" → поточний модуль
-  - Таблиця: заголовок [Зміст модуля, категорія TB1.1, TB1.3, TB2]
+  - Таблиця: заголовок [Зміст модуля, категорія B1.1, B1.3, B2]
              рядки: [номер, "N.N Назва розділу", K1, K2, K3]
              підсумок: ["", "", сума, сума, сума]
 """
@@ -19,16 +19,16 @@ log = logging.getLogger(__name__)
 
 # Відповідність заголовків стовпців до кодів категорій
 CATEGORY_MAP = {
-    "B1.1": "TB1.1",
-    "В1.1": "TB1.1",
-    "B1.3": "TB1.3",
-    "В1.3": "TB1.3",
-    "B2":   "TB2",
-    "В2":   "TB2",
+    "B1.1": "B1.1",
+    "В1.1": "B1.1",
+    "B1.3": "B1.3",
+    "В1.3": "B1.3",
+    "B2":   "B2",
+    "В2":   "B2",
     # Вже нормалізовані коди
-    "TB1.1": "TB1.1",
-    "TB1.3": "TB1.3",
-    "TB2":   "TB2",
+    "B1.1": "B1.1",
+    "B1.3": "B1.3",
+    "B2":   "B2",
 }
 
 
@@ -97,7 +97,7 @@ def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
 
     # Зберігаємо категорії, якщо ще не існують
     cat_ids: dict[str, int] = {}
-    for cat_code in ("TB1.1", "TB1.3", "TB2"):
+    for cat_code in ("B1.1", "B1.3", "B2"):
         cat_ids[cat_code] = db.insert_category(cat_code, db_path)
 
     # Визначаємо відповідність між абзацами та таблицями
@@ -184,7 +184,7 @@ def _process_quota_table(table, module_id: int, cat_ids: dict[str, int], db_path
         cells = [c.text.strip() for c in row.cells]
 
         # Заголовковий рядок (містить коди категорій)
-        if any(c in ("В1.1", "B1.1", "В1.3", "B1.3", "B2", "В2", "TB1.1", "TB1.3", "TB2") for c in cells):
+        if any(c in ("В1.1", "B1.1", "В1.3", "B1.3", "B2", "В2", "B1.1", "B1.3", "B2") for c in cells):
             for i, cell_text in enumerate(cells):
                 norm = cell_text.replace("В", "B").strip()
                 if norm in CATEGORY_MAP:
