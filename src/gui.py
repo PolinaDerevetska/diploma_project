@@ -53,7 +53,7 @@ def _bind_mousewheel(scrollable_frame: "ctk.CTkScrollableFrame"):
 
     def _on_wheel(event):
         if _IS_MAC:
-            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            canvas.yview_scroll(-1 * event.delta, "units")
         else:
             canvas.yview_scroll(-1 * (event.delta // 120), "units")
 
