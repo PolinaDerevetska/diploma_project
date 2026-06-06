@@ -53,22 +53,33 @@ def _bind_mousewheel(scrollable_frame: "ctk.CTkScrollableFrame"):
 
     def _on_wheel(event):
         if _IS_MAC:
-            canvas.yview_scroll(-1 * event.delta, "units")
+            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
         else:
             canvas.yview_scroll(-1 * (event.delta // 120), "units")
 
-    def _bind_recursive(widget):
-        widget.bind("<MouseWheel>", _on_wheel, add="+")
+    def _bind_widget(widget):
+        widget.unbind("<MouseWheel>")
+        widget.bind("<MouseWheel>", _on_wheel)
         if _IS_MAC:
-            widget.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"), add="+")
-            widget.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"), add="+")
+            widget.unbind("<Button-4>")
+            widget.unbind("<Button-5>")
+            widget.bind("<Button-4>", lambda e: canvas.yview_scroll(-1, "units"))
+            widget.bind("<Button-5>", lambda e: canvas.yview_scroll(1, "units"))
         for child in widget.winfo_children():
-            _bind_recursive(child)
+            _bind_widget(child)
 
-    scrollable_frame.bind("<MouseWheel>", _on_wheel, add="+")
-    scrollable_frame._parent_canvas.bind("<MouseWheel>", _on_wheel, add="+")
+    canvas.unbind("<MouseWheel>")
+    canvas.bind("<MouseWheel>", _on_wheel)
 
-    scrollable_frame.bind("<Configure>", lambda e: _bind_recursive(scrollable_frame), add="+")
+    _pending = [False]
+
+    def _on_configure(e):
+        if not _pending[0]:
+            _pending[0] = True
+            scrollable_frame.after_idle(lambda: (_bind_widget(scrollable_frame), _pending.__setitem__(0, False)))
+
+    _bind_widget(scrollable_frame)
+    scrollable_frame.bind("<Configure>", _on_configure, add="+")
 
 FONT       = ("Helvetica", 12)
 FONT_SM    = ("Helvetica", 11)
@@ -732,6 +743,7 @@ class GenerateFrame(ctk.CTkFrame):
                     b.pack(fill="x")
                     a.configure(text="▼")
                     self._module_expanded[m] = True
+                    self._q1_scroll.event_generate("<Configure>")
 
             for w in hdr.winfo_children():
                 w.bind("<Button-1>", _toggle)
@@ -1043,8 +1055,6 @@ class ModulesFrame(ctk.CTkFrame):
         ctk.CTkLabel(hdr, text="Модулі та імпорт даних",
                      fg_color="transparent", text_color=C_TEXT,
                      font=FONT_TITLE).pack(side="left")
-        ghost_btn(hdr, "🔄  Оновити", self.on_show).pack(side="right")
-
         self._readiness_row = ctk.CTkFrame(self, fg_color="transparent")
         self._readiness_row.pack(fill="x", padx=24, pady=(12, 0))
 
@@ -1423,8 +1433,6 @@ class StatsFrame(ctk.CTkFrame):
         ctk.CTkLabel(hdr, text="Журнал генерації",
                      fg_color="transparent", text_color=C_TEXT,
                      font=FONT_TITLE).pack(side="left")
-        ghost_btn(hdr, "🔄  Оновити", self.on_show).pack(side="right")
-
         ctk.CTkLabel(self,
                      text="Тут зберігається історія всіх згенерованих тестів",
                      fg_color="transparent", text_color=C_MUTED,
