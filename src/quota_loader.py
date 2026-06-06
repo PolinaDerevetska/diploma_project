@@ -1,13 +1,3 @@
-"""
-quota_loader.py — завантаження норм із файлу "Таблиця по категоріям.docx"
-                  до бази даних.
-
-Структура файлу:
-  - Paragraph "Модуль N - Назва" → поточний модуль
-  - Таблиця: заголовок [Зміст модуля, категорія B1.1, B1.3, B2]
-             рядки: [номер, "N.N Назва розділу", K1, K2, K3]
-             підсумок: ["", "", сума, сума, сума]
-"""
 
 import re
 import logging
@@ -17,7 +7,6 @@ import database as db
 
 log = logging.getLogger(__name__)
 
-# Відповідність заголовків стовпців до кодів категорій
 CATEGORY_MAP = {
     "B1.1": "B1.1",
     "В1.1": "B1.1",
@@ -25,47 +14,33 @@ CATEGORY_MAP = {
     "В1.3": "B1.3",
     "B2":   "B2",
     "В2":   "B2",
-    # Вже нормалізовані коди
+
     "B1.1": "B1.1",
     "B1.3": "B1.3",
     "B2":   "B2",
 }
 
-
 def _parse_module_from_paragraph(text: str) -> tuple[str, str] | None:
-    """
-    Парсить абзац вигляду "Модуль N - Назва" або "Модуль N. Назва".
-    Повертає (code, name) або None.
-    """
     m = re.match(r'[Мм]одуль\s+(\d+)\s*[-–.]\s*(.*)', text.strip())
     if m:
         return m.group(1).strip(), m.group(2).strip()
     return None
 
-
 def _parse_section_from_row(cells: list[str]) -> tuple[str, str] | None:
-    """
-    Парсить рядок таблиці та витягує (code, name) розділу.
-    Другий стовпець містить "1.1 Арифметика" або "2.2 Механіка 2.2.1 Статика"
-    або "1.2 Алгебра(a)" / "1.3 Геометрія(b)".
-    """
     if len(cells) < 2:
         return None
     raw = cells[1].strip()
     if not raw:
         return None
 
-    # Перший токен — базовий код розділу (напр. "1.1", "2.2.1")
     m = re.match(r'^([\d]+\.[\d.]+)\s*(.*)', raw)
     if not m:
         return None
 
     base_code = m.group(1).strip()
-    rest      = m.group(2).strip()      # "Алгебра(a)" або "Механіка 2.2.1 Статика"
+    rest      = m.group(2).strip()
     name      = rest if rest else base_code
 
-    # Якщо назва закінчується суфіксом (a)/(b)/(c)/(а)/(b) тощо — включаємо в код,
-    # щоб збігатися з кодами, які генерує parser.py (завжди латинський ASCII)
     suffix = re.search(r'\(([a-zA-Zа-яА-ЯіІїЇєЄёЁ])\)\s*$', name)
     if suffix:
         code = f"{base_code}({_normalize_suffix(suffix.group(1))})"
@@ -74,34 +49,21 @@ def _parse_section_from_row(cells: list[str]) -> tuple[str, str] | None:
 
     return code, name
 
-
 _CYR_SUFFIX_MAP = {"а": "a", "б": "b", "в": "c", "г": "d",
                    "с": "c", "е": "e", "d": "d"}
 
 def _normalize_suffix(ch: str) -> str:
-    """Нормалізує одну літеру суфіксу до латинського ASCII нижнього регістру."""
     ch = ch.lower()
     return _CYR_SUFFIX_MAP.get(ch, ch)
 
-
 def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
-    """
-    Читає файл таблиці категорій і зберігає норми до БД.
-
-    Args:
-        filepath: шлях до файлу "Таблиця по категоріям.docx"
-        db_path:  шлях до SQLite БД
-    """
     log.info("Завантаження норм із: %s", filepath)
     doc = Document(filepath)
 
-    # Зберігаємо категорії, якщо ще не існують
     cat_ids: dict[str, int] = {}
     for cat_code in ("B1.1", "B1.3", "B2"):
         cat_ids[cat_code] = db.insert_category(cat_code, db_path)
 
-    # Визначаємо відповідність між абзацами та таблицями
-    # Абзаци та таблиці в документі йдуть по черзі — збираємо їх разом
     module_code: str | None = None
     module_name: str | None = None
     module_id:   int | None = None
@@ -109,7 +71,6 @@ def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
     table_idx = 0
     tables = doc.tables
 
-    # Прохід по абзацах документа, відстежуємо модулі
     all_paragraphs = doc.paragraphs
     para_idx = 0
 
@@ -123,17 +84,12 @@ def load_quotas_from_docx(filepath: str, db_path: str = db.DB_PATH) -> None:
             log.debug("Модуль: %s — %s", module_code, module_name)
             module_id = db.insert_module(module_code, module_name, db_path)
 
-    # Тепер обробляємо таблиці, зіставляючи їх із модулями
-    # Визначаємо поточний модуль за порядком таблиць і параграфів у XML
     _load_quotas_from_tables(doc, cat_ids, db_path)
 
     log.info("Норми завантажено успішно")
 
-
 def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: str) -> None:
-    """Обходить таблиці документа і зберігає норми."""
 
-    # Збираємо всі елементи body по порядку
     from docx.oxml.ns import qn as _qn
     body = doc.element.body
 
@@ -147,7 +103,7 @@ def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: st
         tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
 
         if tag == "p":
-            # Параграф — перевіряємо чи це назва модуля
+
             text = "".join(r.text or "" for r in child.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t"))
             text = text.strip()
             parsed = _parse_module_from_paragraph(text)
@@ -158,7 +114,7 @@ def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: st
                 log.debug("Поточний модуль: %s", name)
 
         elif tag == "tbl":
-            # Таблиця
+
             if table_index >= len(tables_list):
                 break
             table = tables_list[table_index]
@@ -170,20 +126,16 @@ def _load_quotas_from_tables(doc: Document, cat_ids: dict[str, int], db_path: st
 
             _process_quota_table(table, current_module_id, cat_ids, db_path)
 
-
 def _process_quota_table(table, module_id: int, cat_ids: dict[str, int], db_path: str) -> None:
-    """Обробляє одну таблицю норм."""
     if not table.rows:
         return
 
-    # Визначаємо колонки категорій із заголовкового рядка
-    col_cat_map: dict[int, str] = {}  # {col_index: category_code}
+    col_cat_map: dict[int, str] = {}
     header_found = False
 
     for row in table.rows:
         cells = [c.text.strip() for c in row.cells]
 
-        # Заголовковий рядок (містить коди категорій)
         if any(c in ("В1.1", "B1.1", "В1.3", "B1.3", "B2", "В2", "B1.1", "B1.3", "B2") for c in cells):
             for i, cell_text in enumerate(cells):
                 norm = cell_text.replace("В", "B").strip()
@@ -195,9 +147,8 @@ def _process_quota_table(table, module_id: int, cat_ids: dict[str, int], db_path
         if not header_found:
             continue
 
-        # Рядки даних — перший стовпець є числом (порядковий номер)
         if not cells[0].isdigit():
-            continue  # підсумкові рядки або порожні
+            continue
 
         parsed = _parse_section_from_row(cells)
         if not parsed:
@@ -223,7 +174,6 @@ def _process_quota_table(table, module_id: int, cat_ids: dict[str, int], db_path
                 db.insert_quota(section_id, cat_id, count, db_path)
 
     log.debug("  Оброблено таблицю для модуля id=%d", module_id)
-
 
 if __name__ == "__main__":
     import sys

@@ -1,8 +1,3 @@
-"""
-exporter_docx.py — генерація вихідних файлів у форматі Word (.docx):
-  - тест для здобувача + бланк відповідей + (описові питання для М7/М9/М10)
-  - ключ відповідей для викладача
-"""
 
 import os
 import io
@@ -19,11 +14,19 @@ from lxml import etree
 
 from generator import TestVariant, Question, QuestionImage
 
-# ─── EMF: пряма вставка через XML ────────────────────────────────────────────
+def _unique_filepath(output_dir: str, base_name: str) -> str:
+    candidate = os.path.join(output_dir, f"{base_name}.docx")
+    if not os.path.exists(candidate):
+        return candidate
+    n = 2
+    while True:
+        candidate = os.path.join(output_dir, f"{base_name}_{n:03d}.docx")
+        if not os.path.exists(candidate):
+            return candidate
+        n += 1
 
 _emf_counter = 0
 _WMF_MAGIC = 0x9AC6CDD7
-
 
 def _get_emf_dimensions_emu(data: bytes) -> tuple[int, int]:
     try:
@@ -42,7 +45,6 @@ def _get_emf_dimensions_emu(data: bytes) -> tuple[int, int]:
     except Exception:
         pass
     return 2_880_000, 2_160_000
-
 
 def _insert_emf_picture(paragraph, emf_data: bytes, doc_part, max_width_emu: int = 2_880_000):
     global _emf_counter
@@ -80,9 +82,6 @@ def _insert_emf_picture(paragraph, emf_data: bytes, doc_part, max_width_emu: int
     run = paragraph.add_run()
     run._element.append(etree.fromstring(xml.encode("utf-8")))
 
-
-# ─── Допоміжні функції ────────────────────────────────────────────────────────
-
 def _set_font(run, size_pt: float, bold: bool = False, italic: bool = False,
               color: tuple | None = None):
     run.font.size = Pt(size_pt)
@@ -92,7 +91,6 @@ def _set_font(run, size_pt: float, bold: bool = False, italic: bool = False,
     run._element.rPr.rFonts.set(qn("w:eastAsia"), "Times New Roman")
     if color:
         run.font.color.rgb = RGBColor(*color)
-
 
 def _add_paragraph(doc, text="", align=WD_ALIGN_PARAGRAPH.LEFT,
                    space_before=0, space_after=6):
@@ -105,14 +103,12 @@ def _add_paragraph(doc, text="", align=WD_ALIGN_PARAGRAPH.LEFT,
         _set_font(run, 12)
     return p
 
-
 def _set_margins(doc, left_cm=3.0, right_cm=2.0, top_cm=2.0, bottom_cm=2.0):
     for section in doc.sections:
         section.left_margin = Cm(left_cm)
         section.right_margin = Cm(right_cm)
         section.top_margin = Cm(top_cm)
         section.bottom_margin = Cm(bottom_cm)
-
 
 def _cell_font(cell, text, size_pt=10, bold=False, align=WD_ALIGN_PARAGRAPH.CENTER):
     p = cell.paragraphs[0]
@@ -122,9 +118,7 @@ def _cell_font(cell, text, size_pt=10, bold=False, align=WD_ALIGN_PARAGRAPH.CENT
     run = p.add_run(text)
     _set_font(run, size_pt, bold=bold)
 
-
 def _set_cell_shading(cell, fill_hex: str = "D9D9D9"):
-    """Встановлює колір заливки клітинки (hex без #)."""
     tc = cell._tc
     tcPr = tc.get_or_add_tcPr()
     shd = OxmlElement('w:shd')
@@ -132,7 +126,6 @@ def _set_cell_shading(cell, fill_hex: str = "D9D9D9"):
     shd.set(qn('w:color'), 'auto')
     shd.set(qn('w:fill'), fill_hex)
     tcPr.append(shd)
-
 
 def _set_cell_margins(cell, top=20, bottom=20, left=40, right=40):
     tc = cell._tc
@@ -145,9 +138,7 @@ def _set_cell_margins(cell, top=20, bottom=20, left=40, right=40):
         tcMar.append(node)
     tcPr.append(tcMar)
 
-
 _IMG_MARKER_RE = re.compile(r'\[IMG_(\d+)\]')
-
 
 def _insert_single_image(paragraph, img, doc_part, is_option):
     max_w = 1_440_000 if is_option else 2_880_000
@@ -161,7 +152,6 @@ def _insert_single_image(paragraph, img, doc_part, is_option):
         except Exception:
             _set_font(run, 10, italic=True)
             run.text = "[зображення]"
-
 
 def _add_text_with_images(paragraph, text, images, context, doc_part,
                           font_size=12, bold=False):
@@ -187,12 +177,8 @@ def _add_text_with_images(paragraph, text, images, context, doc_part,
         for img in sorted_imgs:
             _insert_single_image(paragraph, img, doc_part, is_option)
 
-
-# ─── Шапка документу ─────────────────────────────────────────────────────────
-
 def _add_title_block(doc, variant, is_answer_key=False):
-    """Шапка документу у стилі М 1 - В 1.1."""
-    # Рядок СМЯ (жирний курсив, ліворуч)
+
     smy_code = "40/03-11-14" if is_answer_key else "40/03-11-07"
     p_smy = doc.add_paragraph()
     p_smy.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -203,7 +189,6 @@ def _add_title_block(doc, variant, is_answer_key=False):
 
     doc.add_paragraph().paragraph_format.space_after = Pt(0)
 
-    # "Екзаменаційне завдання № ___" або "Вірні відповіді..."
     p_title = doc.add_paragraph()
     p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_title.paragraph_format.space_before = Pt(0)
@@ -221,7 +206,6 @@ def _add_title_block(doc, variant, is_answer_key=False):
         _set_font(r_t2, 14, bold=True, italic=True)
         r_t2.font.underline = True
 
-    # Категорія + ПІБ
     p_cat = doc.add_paragraph()
     p_cat.alignment = WD_ALIGN_PARAGRAPH.CENTER
     p_cat.paragraph_format.space_before = Pt(0)
@@ -229,12 +213,8 @@ def _add_title_block(doc, variant, is_answer_key=False):
     r_cat = p_cat.add_run(f"Категорія: {variant.category_code}   |   {variant.student_name}")
     _set_font(r_cat, 12, bold=True)
 
-
-# ─── Питання у тесті ─────────────────────────────────────────────────────────
-
 def _add_question_student(doc, num, q):
-    """Питання у стилі М 1: 'Завдання N' + текст + А/В/С."""
-    # Заголовок "Завдання N" (жирний, підкреслений)
+
     p_hdr = doc.add_paragraph()
     p_hdr.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p_hdr.paragraph_format.space_before = Pt(6)
@@ -243,7 +223,6 @@ def _add_question_student(doc, num, q):
     _set_font(r_hdr, 12, bold=True)
     r_hdr.font.underline = True
 
-    # Текст питання (justify)
     p_q = doc.add_paragraph()
     p_q.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
     p_q.paragraph_format.space_before = Pt(0)
@@ -252,7 +231,6 @@ def _add_question_student(doc, num, q):
     _add_text_with_images(p_q, q.question_text, q.images, "question", doc.part,
                           font_size=12, bold=False)
 
-    # Варіанти А/В/С
     for label, text, ctx in [
         ("А)", q.option_a or "", "option_a"),
         ("В)", q.option_b or "", "option_b"),
@@ -268,20 +246,12 @@ def _add_question_student(doc, num, q):
         _add_text_with_images(op, text, q.images, ctx, doc.part,
                               font_size=12, bold=False)
 
-
-# ─── Бланк відповідей (тестові питання) ──────────────────────────────────────
-# Структура: 4 блоки у рядку, кожен блок = [№ | A | B | C | К]
-# Якщо питань > 4×BLOCK_SIZE — кілька сторінок
-
-_BLOCK_SIZE = 45   # рядків у одному блоці
-_BLOCKS_PER_ROW = 4  # блоків поруч на сторінці
-
+_BLOCK_SIZE = 45
+_BLOCKS_PER_ROW = 4
 
 def _add_answer_sheet(doc, variant):
-    """Бланк відповідей на тестові питання — 4 блоки на рядок."""
     doc.add_page_break()
 
-    # ── Заголовок ──
     ph = doc.add_paragraph()
     ph.alignment = WD_ALIGN_PARAGRAPH.LEFT
     ph.paragraph_format.space_before = Pt(0)
@@ -296,7 +266,6 @@ def _add_answer_sheet(doc, variant):
     _set_font(rh2, 14, bold=True)
     ph2.paragraph_format.space_after = Pt(6)
 
-    # ── Інформаційна таблиця ──
     info_tbl = doc.add_table(rows=3, cols=1)
     info_tbl.style = "Table Grid"
     labels = [
@@ -315,21 +284,14 @@ def _add_answer_sheet(doc, variant):
     pn.paragraph_format.space_before = Pt(6)
     pn.paragraph_format.space_after = Pt(6)
 
-    # ── Сітка відповідей ──
     n = variant.total_questions
-    cols_per_block = 5          # №, A, B, C, К
+    cols_per_block = 5
     total_cols = _BLOCKS_PER_ROW * cols_per_block
 
-    # Ширини стовпців (DXA): в одному блоці ~ 1800 DXA
-    # Page A4 з полями 3см+2см = 16 238 DXA - margins ~ (3+2)*1440 = 7200 → cont = 9038 DXA
-    # 4 blocks × 5 cols = 20 cols; 9038/20 ≈ 452 per col
-    # №=600, A=400, B=400, C=400, К=500 → block=2300, 4×2300=9200≈ok
-    col_w = [600, 400, 400, 400, 500] * _BLOCKS_PER_ROW  # DXA
+    col_w = [600, 400, 400, 400, 500] * _BLOCKS_PER_ROW
 
-    # Скільки рядків у таблиці = max block size + 1 header
-    rows_in_table = _BLOCK_SIZE + 1  # header + 45 data rows
+    rows_in_table = _BLOCK_SIZE + 1
 
-    # Кількість ітерацій сторінок
     total_blocks = (n + _BLOCK_SIZE - 1) // _BLOCK_SIZE
     num_pages = (total_blocks + _BLOCKS_PER_ROW - 1) // _BLOCKS_PER_ROW
 
@@ -344,7 +306,6 @@ def _add_answer_sheet(doc, variant):
         tbl = doc.add_table(rows=rows_in_table, cols=total_cols)
         tbl.style = "Table Grid"
 
-        # Заголовок (сірий фон)
         hdr = tbl.rows[0]
         for b in range(_BLOCKS_PER_ROW):
             base = b * cols_per_block
@@ -353,7 +314,7 @@ def _add_answer_sheet(doc, variant):
                 _cell_font(c, lbl, size_pt=9, bold=True)
                 _set_cell_margins(c, top=20, bottom=20, left=20, right=20)
                 _set_cell_shading(c, "D9D9D9")
-                # Set column width
+
                 tc = c._tc
                 tcPr = tc.get_or_add_tcPr()
                 tcW = OxmlElement('w:tcW')
@@ -361,23 +322,22 @@ def _add_answer_sheet(doc, variant):
                 tcW.set(qn('w:type'), 'dxa')
                 tcPr.append(tcW)
 
-        # Рядки даних
         for row_idx in range(1, rows_in_table):
             row = tbl.rows[row_idx]
             for b in range(_BLOCKS_PER_ROW):
                 block_num = page_idx * _BLOCKS_PER_ROW + b
-                q_num = block_num * _BLOCK_SIZE + row_idx  # 1-based question number
+                q_num = block_num * _BLOCK_SIZE + row_idx
                 base = b * cols_per_block
                 c_num = row.cells[base]
                 _set_cell_margins(c_num, top=15, bottom=15, left=20, right=20)
                 if q_num <= n:
                     _cell_font(c_num, str(q_num), size_pt=9)
-                    # А, В, С — попередньо надруковані (студент перекреслює)
+
                     for ci, abc_lbl in enumerate(["А", "В", "С"], start=1):
                         c = row.cells[base + ci]
                         _cell_font(c, abc_lbl, size_pt=9)
                         _set_cell_margins(c, top=15, bottom=15, left=20, right=20)
-                    # К — порожня
+
                     c_k = row.cells[base + 4]
                     _cell_font(c_k, "", size_pt=9)
                     _set_cell_margins(c_k, top=15, bottom=15, left=20, right=20)
@@ -386,7 +346,6 @@ def _add_answer_sheet(doc, variant):
                         c = row.cells[base + ci]
                         _set_cell_margins(c, top=15, bottom=15, left=20, right=20)
 
-    # ── Підписи ──
     doc.add_paragraph()
     footer_tbl = doc.add_table(rows=4, cols=1)
     footer_tbl.style = "Table Grid"
@@ -401,11 +360,7 @@ def _add_answer_sheet(doc, variant):
         _cell_font(cell, lbl, size_pt=11, align=WD_ALIGN_PARAGRAPH.LEFT)
         _set_cell_margins(cell, top=40, bottom=40, left=80, right=80)
 
-
-# ─── Бланк описових питань (М7/М9/М10) ───────────────────────────────────────
-
 def _add_descriptive_sheet(doc, variant, desc_questions):
-    """Бланк відповідей на описові питання для модулів 7, 9, 10."""
     if not desc_questions:
         return
 
@@ -422,7 +377,6 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
     _set_font(rh2, 14, bold=True)
     ph2.paragraph_format.space_after = Pt(6)
 
-    # ── Інформаційна таблиця ──
     info_tbl = doc.add_table(rows=3, cols=1)
     info_tbl.style = "Table Grid"
     for i, lbl in enumerate([
@@ -436,12 +390,10 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
 
     doc.add_paragraph()
 
-    # ── Питання ──
     pq = doc.add_paragraph()
     rq = pq.add_run("Екзаменаційні запитання:")
     _set_font(rq, 12, bold=True)
 
-    # Групуємо по модулях
     by_module: dict[str, list] = {}
     for q in desc_questions:
         by_module.setdefault(q.module_code, []).append(q)
@@ -470,7 +422,6 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
                                   doc.part, font_size=11)
             num += 1
 
-    # ── Відповіді ──
     doc.add_paragraph()
     pa = doc.add_paragraph()
     ra = pa.add_run("Відповіді:")
@@ -481,7 +432,7 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
         pans.paragraph_format.space_before = Pt(4)
         rans = pans.add_run(f"{i}. ")
         _set_font(rans, 11, bold=True)
-        # Blank lines for answer
+
         for _ in range(3):
             pline = doc.add_paragraph()
             pline.paragraph_format.space_before = Pt(0)
@@ -489,7 +440,6 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
             rline = pline.add_run("_" * 80)
             _set_font(rline, 11)
 
-    # ── Підписи ──
     doc.add_paragraph()
     foot_tbl = doc.add_table(rows=5, cols=1)
     foot_tbl.style = "Table Grid"
@@ -504,26 +454,17 @@ def _add_descriptive_sheet(doc, variant, desc_questions):
         _cell_font(cell, lbl, size_pt=11, align=WD_ALIGN_PARAGRAPH.LEFT)
         _set_cell_margins(cell, top=40, bottom=40, left=80, right=80)
 
-
-# ─── Основні функції експорту ─────────────────────────────────────────────────
-
 def export_student_docx(
     variant: TestVariant,
     output_dir: str,
     filename: str | None = None,
     descriptive: list | None = None,
 ) -> str:
-    """
-    Генерує Word-документ для студента:
-      - тест
-      - бланк відповідей A/B/C
-      - (опційно) бланк описових питань для М7/М9/М10
-    """
     os.makedirs(output_dir, exist_ok=True)
     safe_name = variant.student_name.replace(" ", "_").replace("/", "-")
     if filename is None:
         filename = f"Тест_{variant.category_code}_{safe_name}"
-    filepath = os.path.join(output_dir, f"{filename}.docx")
+    filepath = _unique_filepath(output_dir, filename)
 
     doc = Document()
     _set_margins(doc)
@@ -532,16 +473,13 @@ def export_student_docx(
     for i, q in enumerate(variant.questions, start=1):
         _add_question_student(doc, i, q)
 
-    # Бланк відповідей
     _add_answer_sheet(doc, variant)
 
-    # Описові питання (М7/М9/М10)
     if descriptive:
         _add_descriptive_sheet(doc, variant, descriptive)
 
     doc.save(filepath)
     return filepath
-
 
 def export_answer_key_docx(
     variant: TestVariant,
@@ -549,28 +487,19 @@ def export_answer_key_docx(
     filename: str | None = None,
     descriptive: list | None = None,
 ) -> str:
-    """
-    Генерує ключ відповідей для викладача:
-      Таблиця: №, Текст питання, Правильна відповідь
-      + (опційно) розділ описових питань з еталонними відповідями
-    """
     os.makedirs(output_dir, exist_ok=True)
     safe_name = variant.student_name.replace(" ", "_").replace("/", "-")
     if filename is None:
         filename = f"Ключ_{variant.category_code}_{safe_name}"
-    filepath = os.path.join(output_dir, f"{filename}.docx")
+    filepath = _unique_filepath(output_dir, filename)
 
     doc = Document()
     _set_margins(doc)
     _add_title_block(doc, variant, is_answer_key=True)
 
-    # ── Таблиця ключа відповідей ──
-    # Колонки: №(600), Текст питання(6500), Відповідь(900)
-    # Total ~8000 DXA ≈ content width
     tbl = doc.add_table(rows=1, cols=3)
     tbl.style = "Table Grid"
 
-    # Заголовок
     hdr = tbl.rows[0].cells
     col_widths = [600, 6500, 900]
     for ci, (h, w) in enumerate(zip(["№", "Питання", "Відп."], col_widths)):
@@ -590,11 +519,9 @@ def export_answer_key_docx(
         row = tbl.add_row()
         cells = row.cells
 
-        # №
         _cell_font(cells[0], str(i), size_pt=9)
         _set_cell_margins(cells[0])
 
-        # Текст питання (скорочено)
         q_text = q.question_text.replace('\n', ' ')
         if len(q_text) > 120:
             q_text = q_text[:117] + "..."
@@ -603,18 +530,16 @@ def export_answer_key_docx(
         p_q.paragraph_format.space_after = Pt(0)
         r_q = p_q.add_run(q_text)
         _set_font(r_q, 8)
-        # Якщо є зображення — показати [IMG]
+
         if q.images:
             r_img = p_q.add_run(" [IMG]")
             _set_font(r_img, 8, italic=True)
         _set_cell_margins(cells[1])
 
-        # Правильна відповідь
         ans = ans_labels.get(q.correct_answer, q.correct_answer)
         _cell_font(cells[2], ans, size_pt=10, bold=True)
         _set_cell_margins(cells[2])
 
-    # ── Описові питання (ключ) ──
     if descriptive:
         doc.add_page_break()
         pd = doc.add_paragraph()
@@ -640,7 +565,7 @@ def export_answer_key_docx(
             pm.paragraph_format.space_before = Pt(8)
 
             for q in by_module[mod_code]:
-                # Питання
+
                 p_q = doc.add_paragraph()
                 p_q.paragraph_format.space_before = Pt(4)
                 rn = p_q.add_run(f"{num}. ")
@@ -648,7 +573,6 @@ def export_answer_key_docx(
                 _add_text_with_images(p_q, q.question_text, q.images, "question",
                                       doc.part, font_size=10)
 
-                # Еталонна відповідь
                 ans_key = q.correct_answer.upper()
                 opt_map = {'A': q.option_a, 'B': q.option_b, 'C': q.option_c}
                 ans_text = opt_map.get(ans_key, '')
@@ -667,7 +591,6 @@ def export_answer_key_docx(
 
     doc.save(filepath)
     return filepath
-
 
 if __name__ == "__main__":
     import sys

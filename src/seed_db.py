@@ -1,13 +1,3 @@
-"""
-seed_db.py — початкове заповнення бази даних нормами з таблиці категорій.
-
-Викликається автоматично при першому запуску програми, якщо БД порожня
-(відсутні категорії або розділи).
-
-Таблиця норм шукається в:
-  1. <папка_програми>/data/Таблиця по категоріям.docx  (основне місце)
-  2. Поряд з виконуваним файлом (для .app / .exe збірок)
-"""
 
 import os
 import logging
@@ -20,30 +10,20 @@ log = logging.getLogger(__name__)
 _SRC  = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_SRC)
 
-# Шляхи пошуку файлу таблиці норм
 _QUOTA_CANDIDATES = [
     os.path.join(_ROOT, "data", "Таблиця по категоріям.docx"),
     os.path.join(_ROOT, "data", "Tablytsia_po_katehoriyam.docx"),
     os.path.join(_SRC, "Таблиця по категоріям.docx"),
 ]
 
-
 def find_quota_table() -> str | None:
-    """Шукає файл таблиці норм у стандартних місцях. Повертає шлях або None."""
     for path in _QUOTA_CANDIDATES:
         if os.path.exists(path):
             log.info("Знайдено таблицю норм: %s", path)
             return path
     return None
 
-
 def needs_seeding(db_path: str = db.DB_PATH) -> bool:
-    """
-    Перевіряє чи потрібна ініціалізація:
-    - БД не існує, або
-    - таблиця categories порожня, або
-    - таблиця quotas порожня
-    """
     if not os.path.exists(db_path):
         return True
     try:
@@ -52,19 +32,7 @@ def needs_seeding(db_path: str = db.DB_PATH) -> bool:
     except Exception:
         return True
 
-
 def seed(db_path: str = db.DB_PATH, quota_path: str | None = None) -> bool:
-    """
-    Ініціалізує БД нормами.
-
-    Args:
-        db_path:    шлях до SQLite БД
-        quota_path: явний шлях до таблиці норм (якщо None — шукається автоматично)
-
-    Returns:
-        True — якщо ініціалізація пройшла успішно
-        False — якщо файл таблиці не знайдено
-    """
     quota_file = quota_path or find_quota_table()
     if not quota_file:
         log.warning(
@@ -84,23 +52,13 @@ def seed(db_path: str = db.DB_PATH, quota_path: str | None = None) -> bool:
     )
     return True
 
-
 def auto_seed_if_needed(db_path: str = db.DB_PATH) -> bool:
-    """
-    Перевіряє необхідність ініціалізації і виконує її.
-    Безпечно викликати при кожному запуску програми.
-
-    Returns:
-        True — якщо ініціалізація була виконана (або вже не потрібна)
-        False — якщо потрібна, але файл таблиці не знайдено
-    """
     if not needs_seeding(db_path):
         log.debug("БД вже заповнена, seed не потрібен.")
         return True
 
     log.info("БД порожня — запускаємо початкове заповнення...")
     return seed(db_path)
-
 
 if __name__ == "__main__":
     import sys

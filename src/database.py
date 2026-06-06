@@ -1,27 +1,18 @@
-"""
-database.py — робота з SQLite базою даних для системи генерації тестів Part 147.
-Містить схему БД та всі CRUD-операції.
-"""
 
 import sqlite3
 import os
 from typing import Optional
 
-
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "questions.db")
 
-
 def get_connection(db_path: str = DB_PATH) -> sqlite3.Connection:
-    """Повертає з'єднання з базою даних."""
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     conn = sqlite3.connect(db_path)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
-
 def init_db(db_path: str = DB_PATH) -> None:
-    """Створює всі таблиці БД, якщо вони ще не існують."""
     with get_connection(db_path) as conn:
         conn.executescript("""
             -- Модулі (M1, M2, ... M17)
@@ -84,9 +75,7 @@ def init_db(db_path: str = DB_PATH) -> None:
     print(f"[DB] Ініціалізовано: {db_path}")
     migrate_category_codes(db_path)
 
-
 def migrate_category_codes(db_path: str = DB_PATH) -> None:
-    """Міграція: перейменовує TB1.1→B1.1, TB1.3→B1.3, TB2→B2 (одноразово)."""
     renames = [("TB1.1", "B1.1"), ("TB1.3", "B1.3"), ("TB2", "B2")]
     with get_connection(db_path) as conn:
         for old, new in renames:
@@ -100,11 +89,7 @@ def migrate_category_codes(db_path: str = DB_PATH) -> None:
                 conn.execute("UPDATE categories SET code=? WHERE code=?", (new, old))
                 print(f"[DB] Міграція: {old} → {new}")
 
-
-# ─── Модулі ──────────────────────────────────────────────────────────────────
-
 def insert_module(code: str, name: str, db_path: str = DB_PATH) -> int:
-    """Додає модуль або повертає існуючий id."""
     with get_connection(db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM modules WHERE code = ?", (code,)
@@ -116,16 +101,11 @@ def insert_module(code: str, name: str, db_path: str = DB_PATH) -> int:
         )
         return cur.lastrowid
 
-
 def get_all_modules(db_path: str = DB_PATH) -> list[sqlite3.Row]:
     with get_connection(db_path) as conn:
         return conn.execute("SELECT * FROM modules ORDER BY CAST(code AS INTEGER)").fetchall()
 
-
-# ─── Категорії ───────────────────────────────────────────────────────────────
-
 def insert_category(code: str, db_path: str = DB_PATH) -> int:
-    """Додає категорію або повертає існуючий id."""
     with get_connection(db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM categories WHERE code = ?", (code,)
@@ -135,7 +115,6 @@ def insert_category(code: str, db_path: str = DB_PATH) -> int:
         cur = conn.execute("INSERT INTO categories (code) VALUES (?)", (code,))
         return cur.lastrowid
 
-
 def get_category_id(code: str, db_path: str = DB_PATH) -> Optional[int]:
     with get_connection(db_path) as conn:
         row = conn.execute(
@@ -143,16 +122,11 @@ def get_category_id(code: str, db_path: str = DB_PATH) -> Optional[int]:
         ).fetchone()
         return row["id"] if row else None
 
-
 def get_all_categories(db_path: str = DB_PATH) -> list[sqlite3.Row]:
     with get_connection(db_path) as conn:
         return conn.execute("SELECT * FROM categories ORDER BY code").fetchall()
 
-
-# ─── Розділи ─────────────────────────────────────────────────────────────────
-
 def insert_section(module_id: int, code: str, name: str, db_path: str = DB_PATH) -> int:
-    """Додає розділ або повертає існуючий id."""
     with get_connection(db_path) as conn:
         existing = conn.execute(
             "SELECT id FROM sections WHERE module_id = ? AND code = ?",
@@ -166,7 +140,6 @@ def insert_section(module_id: int, code: str, name: str, db_path: str = DB_PATH)
         )
         return cur.lastrowid
 
-
 def get_sections_by_module(module_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
     with get_connection(db_path) as conn:
         return conn.execute(
@@ -174,12 +147,7 @@ def get_sections_by_module(module_id: int, db_path: str = DB_PATH) -> list[sqlit
             (module_id,)
         ).fetchall()
 
-
 def get_sections_by_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
-    """
-    Повертає всі розділи, що мають питання для заданої категорії,
-    разом із кількістю доступних питань та збереженою нормою.
-    """
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT s.id, s.code AS section_code, s.name AS section_name,
@@ -195,13 +163,7 @@ def get_sections_by_category(category_id: int, db_path: str = DB_PATH) -> list[s
             (category_id, category_id),
         ).fetchall()
 
-
 def get_sections_for_category_with_quotas(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
-    """
-    Повертає всі розділи, передбачені для категорії (quota > 0),
-    разом із кількістю доступних питань у БД (може бути 0 якщо модуль ще не імпортований).
-    Використовується у wizard генерації — показує лише релевантні модулі/розділи.
-    """
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT s.id, s.code AS section_code, s.name AS section_name,
@@ -218,12 +180,7 @@ def get_sections_for_category_with_quotas(category_id: int, db_path: str = DB_PA
             (category_id, category_id),
         ).fetchall()
 
-
 def get_modules_for_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
-    """
-    Повертає модулі, що мають хоча б один розділ із quota > 0 для категорії.
-    Разом із загальною кількістю питань у БД та кількістю завантажених розділів.
-    """
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT m.id, m.code, m.name,
@@ -238,9 +195,6 @@ def get_modules_for_category(category_id: int, db_path: str = DB_PATH) -> list[s
                ORDER BY CAST(m.code AS INTEGER)""",
             (category_id, category_id),
         ).fetchall()
-
-
-# ─── Питання ─────────────────────────────────────────────────────────────────
 
 def insert_question(
     section_id: int,
@@ -264,20 +218,17 @@ def insert_question(
         )
         return cur.lastrowid
 
-
 def get_questions(
     section_id: int,
     category_id: int,
     db_path: str = DB_PATH,
 ) -> list[sqlite3.Row]:
-    """Повертає всі питання для заданого розділу та категорії."""
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT * FROM questions
                WHERE section_id = ? AND category_id = ?""",
             (section_id, category_id),
         ).fetchall()
-
 
 def count_questions(section_id: int, category_id: int, db_path: str = DB_PATH) -> int:
     with get_connection(db_path) as conn:
@@ -286,9 +237,6 @@ def count_questions(section_id: int, category_id: int, db_path: str = DB_PATH) -
             (section_id, category_id),
         ).fetchone()
         return row["cnt"]
-
-
-# ─── Норми ───────────────────────────────────────────────────────────────────
 
 def insert_quota(
     section_id: int,
@@ -304,9 +252,7 @@ def insert_quota(
             (section_id, category_id, count),
         )
 
-
 def get_quotas_for_category(category_id: int, db_path: str = DB_PATH) -> list[sqlite3.Row]:
-    """Повертає всі норми для заданої категорії (тільки де count > 0)."""
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT q.section_id, q.count, s.code as section_code,
@@ -319,9 +265,6 @@ def get_quotas_for_category(category_id: int, db_path: str = DB_PATH) -> list[sq
             (category_id,),
         ).fetchall()
 
-
-# ─── Зображення ──────────────────────────────────────────────────────────────
-
 def insert_question_image(
     question_id: int,
     context: str,
@@ -330,7 +273,6 @@ def insert_question_image(
     data: bytes,
     db_path: str = DB_PATH,
 ) -> int:
-    """Зберігає зображення, прив'язане до питання."""
     with get_connection(db_path) as conn:
         cur = conn.execute(
             """INSERT INTO question_images (question_id, context, img_index, ext, data)
@@ -339,12 +281,10 @@ def insert_question_image(
         )
         return cur.lastrowid
 
-
 def get_question_images(
     question_id: int,
     db_path: str = DB_PATH,
 ) -> list[sqlite3.Row]:
-    """Повертає всі зображення для питання, відсортовані за context та img_index."""
     with get_connection(db_path) as conn:
         return conn.execute(
             """SELECT * FROM question_images
@@ -353,11 +293,7 @@ def get_question_images(
             (question_id,),
         ).fetchall()
 
-
-# ─── Статистика ──────────────────────────────────────────────────────────────
-
 def get_db_stats(db_path: str = DB_PATH) -> dict:
-    """Повертає загальну статистику по БД."""
     with get_connection(db_path) as conn:
         stats = {
             "modules":    conn.execute("SELECT COUNT(*) FROM modules").fetchone()[0],
@@ -367,7 +303,6 @@ def get_db_stats(db_path: str = DB_PATH) -> dict:
             "quotas":     conn.execute("SELECT COUNT(*) FROM quotas WHERE count > 0").fetchone()[0],
         }
     return stats
-
 
 if __name__ == "__main__":
     init_db()
